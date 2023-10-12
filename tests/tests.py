@@ -19,12 +19,12 @@ class TestWorkflowsBase(snakemake.common.tests.TestWorkflowsBase):
             account_key=os.getenv("AZ_BATCH_KEY"),
         )
 
-    def get_default_remote_provider(self) -> Optional[str]:
+    def get_default_storage_provider(self) -> Optional[str]:
         # Return name of default remote provider if required for testing,
         # otherwise None.
         return "AzBlob"
 
-    def get_default_remote_prefix(self) -> Optional[str]:
+    def get_default_storage_prefix(self) -> Optional[str]:
         # Return default remote prefix if required for testing,
         # otherwise None.
         return os.getenv("AZ_BLOB_PREFIX")
