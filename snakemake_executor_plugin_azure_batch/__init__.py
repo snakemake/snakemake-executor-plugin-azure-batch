@@ -4,16 +4,12 @@ __email__ = "johannes.koester@uni-due.de"
 __license__ = "MIT"
 
 from dataclasses import dataclass, field
-import hashlib
 import os
 import datetime
 import io
 import re
-import shutil
 import shlex
 import sys
-import tarfile
-import tempfile
 import uuid
 from pprint import pformat
 from urllib.parse import urlparse
