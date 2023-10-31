@@ -17,7 +17,10 @@ from typing import AsyncGenerator, List, Optional
 
 from snakemake_interface_executor_plugins.executors.base import SubmittedJobInfo
 from snakemake_interface_executor_plugins.executors.remote import RemoteExecutor
-from snakemake_interface_executor_plugins import ExecutorSettingsBase, CommonSettings
+from snakemake_interface_executor_plugins.settings import (
+    ExecutorSettingsBase,
+    CommonSettings,
+)
 from snakemake_interface_executor_plugins.jobs import (
     JobExecutorInterface,
 )
