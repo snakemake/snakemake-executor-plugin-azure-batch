@@ -24,7 +24,7 @@ from snakemake_interface_executor_plugins.settings import (
 from snakemake_interface_executor_plugins.jobs import (
     JobExecutorInterface,
 )
-from snakemake_interface_common.exception import WorkflowError
+from snakemake_interface_common.exceptions import WorkflowError
 
 from azure.core.pipeline import PipelineContext, PipelineRequest
 from azure.core.pipeline.transport import HttpRequest
