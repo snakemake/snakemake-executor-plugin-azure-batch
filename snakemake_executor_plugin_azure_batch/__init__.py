@@ -17,13 +17,11 @@ import tempfile
 import uuid
 from pprint import pformat
 from urllib.parse import urlparse
-from typing import List, Generator, Optional
+from typing import AsyncGenerator, List, Optional
 
 from snakemake_interface_executor_plugins.executors.base import SubmittedJobInfo
 from snakemake_interface_executor_plugins.executors.remote import RemoteExecutor
 from snakemake_interface_executor_plugins import ExecutorSettingsBase, CommonSettings
-from snakemake_interface_executor_plugins.workflow import WorkflowExecutorInterface
-from snakemake_interface_executor_plugins.logging import LoggerExecutorInterface
 from snakemake_interface_executor_plugins.jobs import (
     JobExecutorInterface,
 )
@@ -42,7 +40,6 @@ import azure.mgmt.batch.models as mgmtbatchmodels
 
 from snakemake.remote.AzBlob import AzureStorageHelper
 import msrest.authentication as msa
-from snakemake_executor_plugin_azure_batch.common import bytesto
 
 
 # Optional:
@@ -91,29 +88,17 @@ common_settings = CommonSettings(
     # filesystem (True) or not (False).
     # This is e.g. the case for cloud execution.
     implies_no_shared_fs=True,
+    pass_default_storage_provider_args=True,
+    pass_default_resources_args=True,
+    pass_envvar_declarations_to_cmd=False,
+    auto_deploy_default_storage_provider=True,
 )
 
 
 # Required:
 # Implementation of your executor
 class Executor(RemoteExecutor):
-    def __init__(
-        self,
-        workflow: WorkflowExecutorInterface,
-        logger: LoggerExecutorInterface,
-    ):
-        super().__init__(
-            workflow,
-            logger,
-            # configure behavior of RemoteExecutor below
-            # whether arguments for setting the remote provider shall  be passed to jobs
-            pass_default_storage_provider_args=True,
-            # whether arguments for setting default resources shall be passed to jobs
-            pass_default_resources_args=True,
-            # whether environment variables shall be passed to jobs
-            pass_envvar_declarations_to_cmd=True,
-        )
-
+    def __post_init__(self):
         AZURE_BATCH_RESOURCE_ENDPOINT = "https://batch.core.windows.net/"
 
         # Here we validate that az blob credential is SAS
@@ -124,14 +109,12 @@ class Executor(RemoteExecutor):
         # TODO this does not work if the remote is used without default_remote_prefix
         # get container from remote prefix
         self.prefix_container = str.split(
-            workflow.storage_settings.default_remote_prefix, "/"
+            self.workflow.storage_settings.default_remote_prefix, "/"
         )[0]
 
         # setup batch configuration sets self.az_batch_config
         self.batch_config = AzBatchConfig(self.workflow.executor_settings.account_url)
-        logger.debug(f"AzBatchConfig: {self.mask_batch_config_as_string()}")
-
-        self.workflow = workflow
+        self.logger.debug(f"AzBatchConfig: {self.mask_batch_config_as_string()}")
 
         # handle case on OSX with /var/ symlinked to /private/var/ causing
         # issues with workdir not matching other workflow file dirs
@@ -156,28 +139,19 @@ class Executor(RemoteExecutor):
         # enable autoscale flag
         self.az_batch_enable_autoscale = self.workflow.executor_settings.autoscale
 
-        # Package workflow sources files and upload to storage
-        self._build_packages = set()
-        targz = self._generate_build_source_package()
-
-        # removed after job failure/success
-        self.resource_file = self._upload_build_source_package(
-            targz, resource_prefix=self.batch_config.resource_file_prefix
-        )
-
         # authenticate batch client from SharedKeyCredentials
         if (
             self.batch_config.batch_account_key is not None
             and self.batch_config.managed_identity_client_id is None
         ):
-            logger.debug("Using batch account key for authentication...")
+            self.logger.debug("Using batch account key for authentication...")
             creds = SharedKeyCredentials(
                 self.batch_config.batch_account_name,
                 self.batch_config.batch_account_key,
             )
         # else authenticate with managed indentity client id
         elif self.batch_config.managed_identity_client_id is not None:
-            logger.debug("Using managed identity batch authentication...")
+            self.logger.debug("Using managed identity batch authentication...")
             creds = DefaultAzureCredential(
                 managed_identity_client_id=self.batch_config.managed_identity_client_id
             )
@@ -192,7 +166,7 @@ class Executor(RemoteExecutor):
         if self.batch_config.managed_identity_resource_id is not None:
             self.batch_mgmt_client = BatchManagementClient(
                 credential=DefaultAzureCredential(
-                    managed_identity_client_id=self.batch_config.managed_identity_client_id # noqa
+                    managed_identity_client_id=self.batch_config.managed_identity_client_id  # noqa
                 ),
                 subscription_id=self.batch_config.subscription_id,
             )
@@ -209,12 +183,6 @@ class Executor(RemoteExecutor):
 
         self.logger.debug("Deleting AzBatch pool")
         self.batch_client.pool.delete(self.pool_id)
-
-        self.logger.debug("Deleting workflow sources from blob")
-
-        self.azblob_helper.delete_from_container(
-            self.prefix_container, self.resource_file.file_path
-        )
 
         super().shutdown()
 
@@ -238,10 +206,7 @@ class Executor(RemoteExecutor):
                 continue
 
         exec_job = self.format_job_exec(job)
-        exec_job = (
-            f"/bin/bash -c 'tar xzf {self.resource_file.file_path} && "
-            f"{shlex.quote(exec_job)}'"
-        )
+        exec_job = f"/bin/bash -c '{shlex.quote(exec_job)}'"
 
         # A string that uniquely identifies the Task within the Job.
         task_uuid = str(uuid.uuid1())
@@ -267,7 +232,6 @@ class Executor(RemoteExecutor):
             id=task_id,
             command_line=exec_job,
             container_settings=task_container_settings,
-            resource_files=[self.resource_file],  # Snakefile, envs, yml files etc.
             user_identity=batchmodels.UserIdentity(auto_user=user),
             environment_settings=envsettings,
         )
@@ -284,7 +248,7 @@ class Executor(RemoteExecutor):
 
     async def check_active_jobs(
         self, active_jobs: List[SubmittedJobInfo]
-    ) -> Generator[SubmittedJobInfo, None, None]:
+    ) -> AsyncGenerator[SubmittedJobInfo, None, None]:
         # Check the status of active jobs.
 
         # You have to iterate over the given list active_jobs.
@@ -320,14 +284,6 @@ class Executor(RemoteExecutor):
                         batch_job.task_id, str(dt), rt
                     )
                 )
-
-                def print_output():
-                    self.logger.debug(
-                        "task {}: stderr='{}'\n".format(batch_job.task_id, stderr)
-                    )
-                    self.logger.debug(
-                        "task {}: stdout='{}'\n".format(batch_job.task_id, stdout)
-                    )
 
                 if (
                     task.execution_info.result
@@ -645,94 +601,6 @@ class Executor(RemoteExecutor):
                     "AZ_BLOB_CREDENTIAL is not a valid storage account SAS token."
                 )
 
-    # from google_lifesciences.py
-    def _set_workflow_sources(self):
-        """We only add files from the working directory that are config related
-        (e.g., the Snakefile or a config.yml equivalent), or checked into git.
-        """
-        self.workflow_sources = []
-
-        for wfs in self.dag.get_sources():
-            if os.path.isdir(wfs):
-                for dirpath, dirnames, filenames in os.walk(wfs):
-                    self.workflow_sources.extend(
-                        [
-                            self._check_source_size(os.path.join(dirpath, f))
-                            for f in filenames
-                        ]
-                    )
-            else:
-                self.workflow_sources.append(
-                    self._check_source_size(os.path.abspath(wfs))
-                )
-
-    # from google_lifesciences.py
-    def _generate_build_source_package(self):
-        """in order for the instance to access the working directory in storage,
-        we need to upload it. This file is cleaned up at the end of the run.
-        We do this, and then obtain from the instance and extract.
-        """
-        # Workflow sources for cloud executor must all be under same workdir root
-        for filename in self.workflow_sources:
-            if self.workdir not in filename:
-                raise WorkflowError(
-                    "All source files must be present in the working directory, "
-                    "{workdir} to be uploaded to a build package that respects "
-                    "relative paths, but {filename} was found outside of this "
-                    "directory. Please set your working directory accordingly, "
-                    "and the path of your Snakefile to be relative to it.".format(
-                        workdir=self.workdir, filename=filename
-                    )
-                )
-
-        # We will generate a tar.gz package, renamed by hash
-        tmpname = next(tempfile._get_candidate_names())
-        targz = os.path.join(tempfile.gettempdir(), f"snakemake-{tmpname}.tar.gz")
-        tar = tarfile.open(targz, "w:gz")
-
-        # Add all workflow_sources files
-        for filename in self.workflow_sources:
-            arcname = filename.replace(self.workdir + os.path.sep, "")
-            tar.add(filename, arcname=arcname)
-        self.logger.debug(
-            f"Created {targz} with the following contents: {self.workflow_sources}"
-        )
-        tar.close()
-
-        # Rename based on hash, in case user wants to save cache
-        hasher = hashlib.sha256()
-        hasher.update(open(targz, "rb").read())
-        sha256 = hasher.hexdigest()
-
-        hash_tar = os.path.join(
-            self.workflow.persistence.aux_path, f"workdir-{sha256}.tar.gz"
-        )
-
-        # Only copy if we don't have it yet, clean up if we do
-        if not os.path.exists(hash_tar):
-            shutil.move(targz, hash_tar)
-        else:
-            os.remove(targz)
-
-        # We will clean these all up at shutdown
-        self._build_packages.add(hash_tar)
-
-        return hash_tar
-
-    def _upload_build_source_package(self, targz, resource_prefix=""):
-        """given a .tar.gz created for a workflow, upload it to the blob
-        storage account, only if the blob doesn't already exist.
-        """
-        blob_name = os.path.join(resource_prefix, os.path.basename(targz))
-
-        # upload blob to storage using storage helper
-        bc = self.azblob_helper.upload_to_azure_storage(
-            self.prefix_container, targz, blob_name=blob_name
-        )
-
-        # return resource file
-        return batchmodels.ResourceFile(http_url=bc.url, file_path=blob_name)
-
     # from https://github.com/Azure-Samples/batch-python-quickstart/blob/master/src/python_quickstart_client.py # noqa
     @staticmethod
     def _read_stream_as_string(stream, encoding):
@@ -764,19 +632,6 @@ class Executor(RemoteExecutor):
             content = ""
 
         return content
-
-    def _check_source_size(self, filename, warning_size_gb=0.2):
-        """A helper function to check the filesize, and return the file
-        to the calling function Additionally, given that we encourage these
-        packages to be small, we set a warning at 200MB (0.2GB).
-        """
-        gb = bytesto(os.stat(filename).st_size, "g")
-        if gb > warning_size_gb:
-            self.logger.warning(
-                f"File {filename} (size {gb} GB) is greater than the {warning_size_gb} "
-                "GB suggested size. Consider uploading larger files to storage first."
-            )
-        return filename
 
 
 class AzBatchConfig:
