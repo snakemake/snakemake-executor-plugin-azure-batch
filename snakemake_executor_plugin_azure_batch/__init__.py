@@ -242,7 +242,7 @@ class Executor(RemoteExecutor):
 
     async def check_active_jobs(
         self, active_jobs: List[SubmittedJobInfo]
-    ) -> AsyncGenerator[SubmittedJobInfo, None, None]:
+    ) -> AsyncGenerator[SubmittedJobInfo, None]:
         # Check the status of active jobs.
 
         # You have to iterate over the given list active_jobs.
