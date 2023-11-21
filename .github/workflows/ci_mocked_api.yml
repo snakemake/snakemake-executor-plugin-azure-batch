@@ -86,8 +86,8 @@ jobs:
 
       - name: Run pytest
         env:
-          AZURE_BATCH_ACCOUNT_URL: "${{ secrets.AZ_BATCH_ACCOUNT_URL }}"
-          AZURE_BATCH_ACCOUNT_KEY: "${{ secrets.AZ_BATCH_KEY }}"
+          SNAKEMAKE_AZURE_BATCH_ACCOUNT_URL: "${{ secrets.AZ_BATCH_ACCOUNT_URL }}"
+          SNAKEMAKE_AZURE_BATCH_ACCOUNT_KEY: "${{ secrets.AZ_BATCH_KEY }}"
         run: poetry run coverage run -m pytest tests/tests_mocked_api.py
 
       - name: Run Coverage
