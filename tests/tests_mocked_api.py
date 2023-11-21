@@ -8,11 +8,11 @@ class TestWorkflowsMocked(TestWorkflowsBase):
     __test__ = True
 
     @patch(
-        "azure.batch.operations.taskoperations.TaskOperations.add",
+        "azure.batch.operations.TaskOperations.add",
         new=MagicMock(autospec=True),
     )
     @patch(
-        "azure.batch.operations.taskoperations.TaskOperations.get",
+        "azure.batch.operations.TaskOperations.get",
         new=MagicMock(
             return_value=CloudTask(state=TaskState.completed),
             autospec=True,
