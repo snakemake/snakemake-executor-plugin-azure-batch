@@ -29,6 +29,6 @@ jobs:
 
       - name: Run pytest
         env:
-          AZ_BATCH_ACCOUNT_URL: "${{ secrets.AZ_BATCH_ACCOUNT_URL }}"
-          AZ_BATCH_ACCOUNT_KEY: "${{ secrets.AZ_BATCH_KEY }}"
+          AZURE_BATCH_ACCOUNT_URL: "${{ secrets.AZ_BATCH_ACCOUNT_URL }}"
+          AZURE_BATCH_ACCOUNT_KEY: "${{ secrets.AZ_BATCH_KEY }}"
         run: poetry run pytest tests/tests_true_api.py -v
