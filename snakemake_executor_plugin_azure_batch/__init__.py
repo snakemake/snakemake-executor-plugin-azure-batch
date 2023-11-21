@@ -36,8 +36,6 @@ from azure.mgmt.batch import BatchManagementClient
 import azure.batch._batch_service_client as bsc
 import azure.batch.models as batchmodels
 import azure.mgmt.batch.models as mgmtbatchmodels
-
-from snakemake.remote.AzBlob import AzureStorageHelper
 import msrest.authentication as msa
 
 
@@ -104,7 +102,6 @@ class Executor(RemoteExecutor):
         # Here we validate that az blob credential is SAS
         # token because it is specific to azure batch executor
         self.validate_az_blob_credential_is_sas()
-        self.azblob_helper = AzureStorageHelper()
 
         # TODO this does not work if the remote is used without default_remote_prefix
         # get container from remote prefix
@@ -124,9 +121,6 @@ class Executor(RemoteExecutor):
             dirname = dirname.removeprefix(osxprefix)
 
         self.workdir = dirname
-
-        # Prepare workflow sources for build package
-        self._set_workflow_sources()
 
         # Pool ids can only contain any combination of alphanumeric characters along
         # with dash and underscore.
@@ -269,21 +263,8 @@ class Executor(RemoteExecutor):
                 task = self.batch_client.task.get(self.job_id, batch_job.task_id)
 
             if task.state == batchmodels.TaskState.completed:
-                dt = task.execution_info.end_time - task.execution_info.start_time
-                rc = task.execution_info.exit_code
-                rt = task.execution_info.retry_count
                 stderr = self._get_task_output(self.job_id, batch_job.task_id, "stderr")
                 stdout = self._get_task_output(self.job_id, batch_job.task_id, "stdout")
-                self.logger.debug(
-                    "task {} completed: result={} exit_code={}\n".format(
-                        batch_job.task_id, task.execution_info.result, rc
-                    )
-                )
-                self.logger.debug(
-                    "task {} completed: run_time={}, retry_count={}\n".format(
-                        batch_job.task_id, str(dt), rt
-                    )
-                )
 
                 if (
                     task.execution_info.result

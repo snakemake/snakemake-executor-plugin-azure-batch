@@ -6,9 +6,7 @@ from snakemake_interface_executor_plugins.settings import ExecutorSettingsBase
 from snakemake_executor_plugin_azure_batch import ExecutorSettings
 
 
-class TestWorkflows(snakemake.common.tests.TestWorkflowsMinioPlayStorageBase):
-    __test__ = True
-
+class TestWorkflowsBase(snakemake.common.tests.TestWorkflowsMinioPlayStorageBase):
     def get_executor(self) -> str:
         return "azure-batch"
 

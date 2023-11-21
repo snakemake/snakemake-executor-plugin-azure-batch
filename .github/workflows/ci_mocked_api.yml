@@ -61,7 +61,7 @@ jobs:
       - name: Check code
         run: poetry run flake8
 
-  testing:
+  testing-mocked-api:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
@@ -88,7 +88,7 @@ jobs:
         env:
           AZ_BATCH_ACCOUNT_URL: "${{ secrets.AZ_BATCH_ACCOUNT_URL }}"
           AZ_BATCH_ACCOUNT_KEY: "${{ secrets.AZ_BATCH_KEY }}"
-        run: poetry run coverage run -m pytest tests/tests.py
+        run: poetry run coverage run -m pytest tests/tests_mocked_api.py
 
       - name: Run Coverage
         run: poetry run coverage report -m

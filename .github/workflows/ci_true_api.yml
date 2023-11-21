@@ -1,0 +1,34 @@
+name: CI
+
+on:
+  workflow_dispatch:
+
+jobs:
+  testing-mocked-api:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+
+      - name: Install poetry
+        run: pip install poetry
+
+      - name: Determine dependencies
+        run: poetry lock
+
+      - uses: actions/setup-python@v4
+        with:
+          python-version: "3.11"
+          cache: poetry
+
+      - name: Install Dependencies using Poetry
+        run: poetry install
+
+      - name: Run pytest
+        env:
+          AZ_BATCH_ACCOUNT_URL: "${{ secrets.AZ_BATCH_ACCOUNT_URL }}"
+          AZ_BATCH_ACCOUNT_KEY: "${{ secrets.AZ_BATCH_KEY }}"
+        run: poetry run pytest tests/tests_true_api.py -v
