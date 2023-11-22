@@ -202,7 +202,6 @@ class ExecutorSettings(ExecutorSettingsBase):
     )
 
 
-
 # Required:
 # Specify common settings shared by various executors.
 common_settings = CommonSettings(
@@ -764,7 +763,9 @@ class AzBatchConfig:
         self.batch_pool_subnet_id = executor_settings.pool_subnet_id
 
         # managed identity resource id configuration
-        self.managed_identity_resource_id = executor_settings.managed_identity_resource_id
+        self.managed_identity_resource_id = (
+            executor_settings.managed_identity_resource_id
+        )
 
         # parse subscription and resource id
         if self.managed_identity_resource_id is not None:
@@ -772,7 +773,6 @@ class AzBatchConfig:
             self.resource_group = self.managed_identity_resource_id.split("/")[4]
 
         self.managed_identity_client_id = executor_settings.managed_identity_client_id
-
 
         if self.batch_pool_subnet_id is not None:
             if (
