@@ -61,6 +61,14 @@ class ExecutorSettings(ExecutorSettingsBase):
             "env_var": True,
         },
     )
+    pool_subnet_id: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Azure batch pool subnet id.",
+            "required": False,
+            "env_var": True,
+        },
+    )
     autoscale: bool = field(
         default=False,
         metadata={
@@ -68,8 +76,131 @@ class ExecutorSettings(ExecutorSettingsBase):
             "will set the initial dedicated node count to zero, and requires five "
             "minutes to resize the cluster, so is only recommended for longer "
             "running workflows.",
+            "required": False,
+            "env_var": False,
         },
     )
+    managed_identity_resource_id: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Azure managed identity resource id.",
+            "required": False,
+            "env_var": True,
+        },
+    )
+    managed_identity_client_id: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Azure managed identity client id.",
+            "required": False,
+            "env_var": True,
+        },
+    )
+    node_start_task_sasurl: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Azure batch node start task bash script sas url.",
+            "required": False,
+            "env_var": False,
+        },
+    )
+    pool_image_publisher: str = field(
+        default="microsoft-azure-batch",
+        metadata={
+            "help": "Azure batch pool image publisher.",
+            "required": False,
+            "env_var": False,
+        },
+    )
+    pool_image_offer: str = field(
+        default="ubuntu-server-container",
+        metadata={
+            "help": "Azure batch pool image offer.",
+            "required": False,
+            "env_var": False,
+        },
+    )
+    pool_image_sku: str = field(
+        default="20-04-lts",
+        metadata={
+            "help": "Azure batch pool image sku.",
+            "required": False,
+            "env_var": False,
+        },
+    )
+    pool_vm_node_agent_sku_id: str = field(
+        default="batch.node.ubuntu 20.04",
+        metadata={
+            "help": "Azure batch pool vm node agent sku id.",
+            "required": False,
+            "env_var": False,
+        },
+    )
+    pool_vm_size: str = field(
+        default="Standard_D2_v3",
+        metadata={
+            "help": "Azure batch pool vm size.",
+            "required": False,
+            "env_var": False,
+        },
+    )
+    pool_node_count: int = field(
+        default=1,
+        metadata={
+            "help": "Azure batch pool node count.",
+            "required": False,
+            "env_var": False,
+        },
+    )
+    tasks_per_node: int = field(
+        default=1,
+        metadata={
+            "help": "Azure batch tasks per node.",
+            "required": False,
+            "env_var": False,
+        },
+    )
+    node_fill_type: str = field(
+        default="spread",
+        metadata={
+            "help": "Azure batch node fill type.",
+            "required": False,
+            "env_var": False,
+        },
+    )
+    node_communication_mode: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Azure batch node communication mode.",
+            "required": False,
+            "env_var": False,
+        },
+    )
+    container_registry_url: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Azure container registry url.",
+            "required": False,
+            "env_var": True,
+        },
+    )
+    container_registry_user: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Azure container registry user.",
+            "required": False,
+            "env_var": True,
+        },
+    )
+    container_registry_pass: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Azure container registry password.",
+            "required": False,
+            "env_var": True,
+        },
+    )
+
 
 
 # Required:
@@ -110,7 +241,10 @@ class Executor(RemoteExecutor):
         )[0]
 
         # setup batch configuration sets self.az_batch_config
-        self.batch_config = AzBatchConfig(self.workflow.executor_settings.account_url)
+        self.batch_config = AzBatchConfig(
+            self.workflow.executor_settings.account_url,
+            self.workflow.executor_settings.account_key,
+        )
         self.logger.debug(f"AzBatchConfig: {self.mask_batch_config_as_string()}")
 
         # handle case on OSX with /var/ symlinked to /private/var/ causing
@@ -616,32 +750,29 @@ class Executor(RemoteExecutor):
 
 
 class AzBatchConfig:
-    def __init__(self, batch_account_url: str):
+    def __init__(self, executor_settings: ExecutorSettings):
         # configure defaults
-        self.batch_account_url = batch_account_url
+        self.batch_account_url = executor_settings.account_url
 
         # parse batch account name
         result = urlparse(self.batch_account_url)
         self.batch_account_name = str.split(result.hostname, ".")[0]
 
-        self.batch_account_key = self.set_or_default("AZ_BATCH_ACCOUNT_KEY", None)
+        self.batch_account_key = executor_settings.account_key
 
         # optional subnet config
-        self.batch_pool_subnet_id = self.set_or_default("BATCH_POOL_SUBNET_ID", None)
+        self.batch_pool_subnet_id = executor_settings.pool_subnet_id
 
         # managed identity resource id configuration
-        self.managed_identity_resource_id = self.set_or_default(
-            "BATCH_MANAGED_IDENTITY_RESOURCE_ID", None
-        )
+        self.managed_identity_resource_id = executor_settings.managed_identity_resource_id
 
         # parse subscription and resource id
         if self.managed_identity_resource_id is not None:
             self.subscription_id = self.managed_identity_resource_id.split("/")[2]
             self.resource_group = self.managed_identity_resource_id.split("/")[4]
 
-        self.managed_identity_client_id = self.set_or_default(
-            "BATCH_MANAGED_IDENTITY_CLIENT_ID", None
-        )
+        self.managed_identity_client_id = executor_settings.managed_identity_client_id
+
 
         if self.batch_pool_subnet_id is not None:
             if (
@@ -649,8 +780,8 @@ class AzBatchConfig:
                 or self.managed_identity_resource_id is None
             ):
                 sys.exit(
-                    "Error: BATCH_MANAGED_IDENTITY_RESOURCE_ID, "
-                    "BATCH_MANAGED_IDENTITY_CLIENT_ID must be set when deploying batch "
+                    "Error: managed_identity_resource_id, "
+                    "managed_identity_client_id must be set when deploying batch "
                     "nodes into a private subnet!"
                 )
 
@@ -668,63 +799,38 @@ class AzBatchConfig:
                 )
 
         # sas url to a batch node start task bash script
-        self.batch_node_start_task_sasurl = os.getenv("BATCH_NODE_START_TASK_SAS_URL")
+        self.batch_node_start_task_sasurl = executor_settings.node_start_task_sasurl
 
         # options configured with env vars or default
-        self.batch_pool_image_publisher = self.set_or_default(
-            "BATCH_POOL_IMAGE_PUBLISHER", "microsoft-azure-batch"
+        self.batch_pool_image_publisher = executor_settings.pool_image_publisher
+        self.batch_pool_image_offer = executor_settings.pool_image_offer
+        self.batch_pool_image_sku = executor_settings.pool_image_sku
+        self.batch_pool_vm_node_agent_sku_id = (
+            executor_settings.pool_vm_node_agent_sku_id
         )
-        self.batch_pool_image_offer = self.set_or_default(
-            "BATCH_POOL_IMAGE_OFFER", "ubuntu-server-container"
-        )
-        self.batch_pool_image_sku = self.set_or_default(
-            "BATCH_POOL_IMAGE_SKU", "20-04-lts"
-        )
-        self.batch_pool_vm_container_image = self.set_or_default(
-            "BATCH_POOL_VM_CONTAINER_IMAGE", "ubuntu"
-        )
-        self.batch_pool_vm_node_agent_sku_id = self.set_or_default(
-            "BATCH_POOL_VM_NODE_AGENT_SKU_ID", "batch.node.ubuntu 20.04"
-        )
-        self.batch_pool_vm_size = self.set_or_default(
-            "BATCH_POOL_VM_SIZE", "Standard_D2_v3"
-        )
+        self.batch_pool_vm_size = executor_settings.pool_vm_size
 
         # dedicated pool node count
-        self.batch_pool_node_count = self.set_or_default("BATCH_POOL_NODE_COUNT", 1)
+        self.batch_pool_node_count = executor_settings.batch_pool_node_count
 
         # default tasks per node
         # see https://learn.microsoft.com/en-us/azure/batch/batch-parallel-node-tasks
-        self.batch_tasks_per_node = self.set_or_default("BATCH_TASKS_PER_NODE", 1)
+        self.batch_tasks_per_node = executor_settings.tasks_per_node
 
         # possible values "spread" or "pack"
         # see https://learn.microsoft.com/en-us/azure/batch/batch-parallel-node-tasks
-        self.batch_node_fill_type = self.set_or_default(
-            "BATCH_NODE_FILL_TYPE", "spread"
-        )
+        self.batch_node_fill_type = executor_settings.node_fill_type
 
         # enables simplified batch node communication if set
         # see: https://learn.microsoft.com/en-us/azure/batch
         # /simplified-compute-node-communication
-        self.batch_node_communication_mode = self.set_or_default(
-            "BATCH_NODE_COMMUNICATION_SIMPLIFIED", None
-        )
+        self.batch_node_communication_mode = executor_settings.node_communication_mode
 
-        self.resource_file_prefix = self.set_or_default(
-            "BATCH_POOL_RESOURCE_FILE_PREFIX", "resource-files"
-        )
+        self.container_registry_url = executor_settings.container_registry_url
 
-        self.container_registry_url = self.set_or_default(
-            "BATCH_CONTAINER_REGISTRY_URL", None
-        )
+        self.container_registry_user = executor_settings.container_registry_user
 
-        self.container_registry_user = self.set_or_default(
-            "BATCH_CONTAINER_REGISTRY_USER", None
-        )
-
-        self.container_registry_pass = self.set_or_default(
-            "BATCH_CONTAINER_REGISTRY_PASS", None
-        )
+        self.container_registry_pass = executor_settings.container_registry_pass
 
     @staticmethod
     def set_or_default(evar: str, default: Optional[str]):
