@@ -13,8 +13,8 @@ class TestWorkflowsBase(snakemake.common.tests.TestWorkflowsMinioPlayStorageBase
     def get_executor_settings(self) -> Optional[ExecutorSettingsBase]:
         # instatiate ExecutorSettings of this plugin as appropriate
         return ExecutorSettings(
-            account_url=os.getenv("AZ_BATCH_ACCOUNT_URL"),
-            account_key=os.getenv("AZ_BATCH_KEY"),
+            account_url=os.getenv("SNAKEMAKE_AZURE_BATCH_ACCOUNT_URL"),
+            account_key=os.getenv("SNAKEMAKE_AZURE_BATCH_ACCOUNT_KEY"),
         )
 
     def get_assume_shared_fs(self) -> bool:
