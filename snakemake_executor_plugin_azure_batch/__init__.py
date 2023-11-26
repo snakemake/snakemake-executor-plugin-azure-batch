@@ -229,16 +229,6 @@ class Executor(RemoteExecutor):
     def __post_init__(self):
         AZURE_BATCH_RESOURCE_ENDPOINT = "https://batch.core.windows.net/"
 
-        # Here we validate that az blob credential is SAS
-        # token because it is specific to azure batch executor
-        self.validate_az_blob_credential_is_sas()
-
-        # TODO this does not work if the remote is used without default_remote_prefix
-        # get container from remote prefix
-        self.prefix_container = str.split(
-            self.workflow.storage_settings.default_remote_prefix, "/"
-        )[0]
-
         # setup batch configuration sets self.az_batch_config
         self.batch_config = AzBatchConfig(
             self.workflow.executor_settings.account_url,
@@ -699,21 +689,6 @@ class Executor(RemoteExecutor):
         )
         masked_urls = self.mask_sas_urls(masked_keys)
         return pformat(masked_urls, indent=2)
-
-    @staticmethod
-    def validate_az_blob_credential_is_sas():
-        """
-        Validates that the AZ_BLOB_CREDENTIAL is a valid storage account SAS
-        token, required when using --az-batch with AzBlob remote.
-        """
-        cred = os.environ.get("AZ_BLOB_CREDENTIAL")
-        if cred is not None:
-            # regex pattern for Storage Account SAS Token
-            rgx = r"\?sv=.*&ss=.*&srt=.*&sp=.*&se=.*&st=.*&spr=.*&sig=.*"
-            if re.compile(rgx).match(cred) is None:
-                raise WorkflowError(
-                    "AZ_BLOB_CREDENTIAL is not a valid storage account SAS token."
-                )
 
     # from https://github.com/Azure-Samples/batch-python-quickstart/blob/master/src/python_quickstart_client.py # noqa
     @staticmethod
