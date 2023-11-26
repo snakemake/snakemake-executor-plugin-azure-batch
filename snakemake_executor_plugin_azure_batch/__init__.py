@@ -176,6 +176,14 @@ class ExecutorSettings(ExecutorSettingsBase):
             "env_var": False,
         },
     )
+    container_image: Optional[str] = field(
+        default="snakemake/snakemake:latest",
+        metadata={
+            "help": "The snakemake base image used to run snakemake",
+            "required": False,
+            "env_var": True
+        }
+    )
     container_registry_url: Optional[str] = field(
         default=None,
         metadata={
@@ -229,10 +237,23 @@ class Executor(RemoteExecutor):
     def __post_init__(self):
         AZURE_BATCH_RESOURCE_ENDPOINT = "https://batch.core.windows.net/"
 
+<<<<<<< HEAD
+=======
+        # Here we validate that az blob credential is SAS
+        # token because it is specific to azure batch executor
+        self.validate_az_blob_credential_is_sas()
+
+        # TODO this does not work if the remote is used without default_remote_prefix
+        # get container from remote prefix
+
+        self.prefix_container = str.split(
+            self.workflow.storage_settings.default_storage_prefix, "/"
+        )[0]
+
+>>>>>>> b79ac78 (executor settings)
         # setup batch configuration sets self.az_batch_config
         self.batch_config = AzBatchConfig(
-            self.workflow.executor_settings.account_url,
-            self.workflow.executor_settings.account_key,
+            executor_settings=self.workflow.executor_settings
         )
         self.logger.debug(f"AzBatchConfig: {self.mask_batch_config_as_string()}")
 
@@ -337,7 +358,7 @@ class Executor(RemoteExecutor):
 
         # This is the docker image we want to run
         task_container_settings = batchmodels.TaskContainerSettings(
-            image_name=self.container_image, container_run_options="--rm"
+            image_name=self.workflow.executor_settings.container_image, container_run_options="--rm"
         )
 
         # https://docs.microsoft.com/en-us/python/api/azure-batch/azure.batch.models.taskaddparameter?view=azure-python # noqa
@@ -498,7 +519,7 @@ class Executor(RemoteExecutor):
         # Specify container configuration, fetching an image
         #  https://docs.microsoft.com/en-us/azure/batch/batch-docker-container-workloads#prefetch-images-for-container-configuration
         container_config = batchmodels.ContainerConfiguration(
-            type="dockerCompatible", container_image_names=[self.container_image]
+            type="dockerCompatible", container_image_names=[self.workflow.executor_settings.container_image]
         )
 
         user = None
@@ -538,7 +559,7 @@ class Executor(RemoteExecutor):
             #  https://docs.microsoft.com/en-us/azure/batch/batch-docker-container-workloads#prefetch-images-for-container-configuration
             container_config = batchmodels.ContainerConfiguration(
                 type="dockerCompatible",
-                container_image_names=[self.container_image],
+                container_image_names=[self.workflow.executor_settings.container_image],
                 container_registries=registry_conf,
             )
 
@@ -786,7 +807,7 @@ class AzBatchConfig:
         self.batch_pool_vm_size = executor_settings.pool_vm_size
 
         # dedicated pool node count
-        self.batch_pool_node_count = executor_settings.batch_pool_node_count
+        self.batch_pool_node_count = executor_settings.pool_node_count
 
         # default tasks per node
         # see https://learn.microsoft.com/en-us/azure/batch/batch-parallel-node-tasks
