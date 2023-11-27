@@ -210,7 +210,6 @@ class ExecutorSettings(ExecutorSettingsBase):
     )
 
     def __post_init__(self):
-
         # parse batch account name
         try:
             parsed = urlparse(self.account_url)
@@ -219,7 +218,7 @@ class ExecutorSettings(ExecutorSettingsBase):
         except Exception as e:
             raise WorkflowError(
                 f"Unable to parse bbtch account url ({self.account_url}): {e}"
-                )
+            )
 
         # parse subscription and resource id
         if self.managed_identity_resource_id is not None:
@@ -379,9 +378,7 @@ class Executor(RemoteExecutor):
 
         job_info = SubmittedJobInfo(job, external_jobid=task_id)
         self.logger.info(f"Added AzBatch task {task_id}")
-        self.logger.debug(
-            f"Task details: {pformat(task.__dict__, indent=2)}"
-        )
+        self.logger.debug(f"Task details: {pformat(task.__dict__, indent=2)}")
         self.report_job_submission(job_info)
 
     async def check_active_jobs(
