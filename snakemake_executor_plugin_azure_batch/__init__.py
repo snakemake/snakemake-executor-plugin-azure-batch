@@ -330,8 +330,6 @@ class Executor(RemoteExecutor):
         # self.report_job_submission(job_info).
         # with job_info being of type
         # snakemake_interface_executor_plugins.executors.base.SubmittedJobInfo.
-        import azure.batch._batch_service_client as batch
-
         envsettings = []
         for key in self.envvars:
             try:
@@ -365,7 +363,7 @@ class Executor(RemoteExecutor):
         # Azure Batch directories on the node)
         # are mapped into the container, all Task environment variables are mapped into
         # the container, and the Task command line is executed in the container
-        task = batch.models.TaskAddParameter(
+        task = batchmodels.TaskAddParameter(
             id=task_id,
             command_line=exec_job,
             container_settings=task_container_settings,
@@ -401,9 +399,14 @@ class Executor(RemoteExecutor):
         self.logger.debug(f"Monitoring {len(active_jobs)} active AzBatch tasks")
         for batch_job in active_jobs:
             async with self.status_rate_limiter:
-                task: batchmodels.CloudTask = self.batch_client.task.get(
-                    self.job_id, batch_job.external_jobid
-                )
+                try:
+                    task: batchmodels.CloudTask = self.batch_client.task.get(
+                        self.job_id, batch_job.external_jobid
+                    )
+                except Exception as e:
+                    self.report_job_error(
+                        batch_job, msg=f"Unable to get Azure Batch Task: {e}"
+                    )
 
             if task.state == batchmodels.TaskState.completed:
                 stderr = self._get_task_output(
@@ -416,16 +419,22 @@ class Executor(RemoteExecutor):
                 ei: batchmodels.TaskExecutionInformation = task.execution_info
                 if ei is not None:
                     if ei.result == batchmodels.TaskExecutionResult.failure:
+                        self.logger.error(
+                            f"Azure Batch wask execution failure: "
+                            f" {ei.failure_info.__dict__}"
+                        )
                         self.report_job_error(batch_job, stderr=stderr, stdout=stdout)
                     elif ei.result == batchmodels.TaskExecutionResult.success:
                         self.report_job_success(batch_job)
                     else:
                         self.logger.error(
-                            "Unknown Azure task execution result: {ei.__dict__}"
+                            f"Unknown Azure task execution result: {ei.__dict__}"
                         )
                         self.report_job_error(batch_job, stderr=stderr, stdout=stdout)
                 else:
-                    self.logger.error("Unknown Azure task execution result")
+                    self.logger.error(
+                        f"Unknown Azure task execution result: {task.__dict__}"
+                    )
                     self.report_job_error(batch_job, stderr=stderr, stdout=stdout)
 
             # The operation is still running
