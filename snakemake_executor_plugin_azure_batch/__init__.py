@@ -237,21 +237,7 @@ class Executor(RemoteExecutor):
     def __post_init__(self):
         AZURE_BATCH_RESOURCE_ENDPOINT = "https://batch.core.windows.net/"
 
-<<<<<<< HEAD
-=======
-        # Here we validate that az blob credential is SAS
-        # token because it is specific to azure batch executor
-        self.validate_az_blob_credential_is_sas()
-
-        # TODO this does not work if the remote is used without default_remote_prefix
-        # get container from remote prefix
-
-        self.prefix_container = str.split(
-            self.workflow.storage_settings.default_storage_prefix, "/"
-        )[0]
-
->>>>>>> b79ac78 (executor settings)
-        # setup batch configuration sets self.az_batch_config
+        # setup batch configuration sets self.batch_config
         self.batch_config = AzBatchConfig(
             executor_settings=self.workflow.executor_settings
         )
