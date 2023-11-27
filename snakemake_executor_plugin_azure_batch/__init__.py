@@ -371,12 +371,22 @@ class Executor(RemoteExecutor):
             environment_settings=envsettings,
         )
 
-        # register job as active, using your own namedtuple.
-        self.batch_client.task.add(self.job_id, task)
-
         job_info = SubmittedJobInfo(job, external_jobid=task_id)
-        self.logger.info(f"Added AzBatch task {task_id}")
-        self.logger.debug(f"Task details: {pformat(task.__dict__, indent=2)}")
+
+        # register job as active, using your own namedtuple.
+        try:
+            self.batch_client.task.add(self.job_id, task)
+        except Exception as e:
+            self.report_job_error(job_info, msg=f"Unable to add batch task: {e}")
+
+        try:
+            t = self.batch_client.task.get(self.job_id)
+        except Exception as e:
+            self.report_job_error(
+                job_info, msg=f"Unable to fetch batch task info: {t}: {e}"
+                )
+
+        self.logger.info(f"Added AzBatch task {task_id}: {t.__dict__}")
         self.report_job_submission(job_info)
 
     async def check_active_jobs(
@@ -431,11 +441,11 @@ class Executor(RemoteExecutor):
                             f"Unknown Azure task execution result: {ei.__dict__}"
                         )
                         self.report_job_error(batch_job, stderr=stderr, stdout=stdout)
-                else:
-                    self.logger.error(
-                        f"Unknown Azure task execution result: {task.__dict__}"
-                    )
-                    self.report_job_error(batch_job, stderr=stderr, stdout=stdout)
+                # else:
+                #     self.logger.error(
+                #         f"Unknown Azure task execution result: {task.__dict__}"
+                #     )
+                #     self.report_job_error(batch_job, stderr=stderr, stdout=stdout)
 
             # The operation is still running
             else:
@@ -680,13 +690,16 @@ class Executor(RemoteExecutor):
 
         self.logger.info(f"Creating batch job {self.job_id}")
 
-        self.batch_client.job.add(
-            bsc.models.JobAddParameter(
-                id=self.job_id,
-                constraints=bsc.models.JobConstraints(max_task_retry_count=0),
-                pool_info=bsc.models.PoolInformation(pool_id=self.pool_id),
+        try:
+            self.batch_client.job.add(
+                bsc.models.JobAddParameter(
+                    id=self.job_id,
+                    constraints=bsc.models.JobConstraints(max_task_retry_count=0),
+                    pool_info=bsc.models.PoolInformation(pool_id=self.pool_id),
+                )
             )
-        )
+        except batchmodels.BatchErrorException as e:
+            raise f"Error adding batch job {e}"
 
     # from https://github.com/Azure-Samples/batch-python-quickstart/blob/master/src/python_quickstart_client.py # noqa
     @staticmethod
