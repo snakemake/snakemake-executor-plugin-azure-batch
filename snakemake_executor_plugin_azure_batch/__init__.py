@@ -7,9 +7,7 @@ from dataclasses import dataclass, field
 import os
 import datetime
 import io
-import re
 import shlex
-import sys
 import uuid
 from pprint import pformat
 from urllib.parse import urlparse
@@ -55,6 +53,7 @@ class ExecutorSettings(ExecutorSettingsBase):
     )
     account_key: Optional[str] = field(
         default=None,
+        repr=False,
         metadata={
             "help": "Azure batch account key.",
             "required": True,
@@ -90,6 +89,7 @@ class ExecutorSettings(ExecutorSettingsBase):
     )
     managed_identity_client_id: Optional[str] = field(
         default=None,
+        repr=False,
         metadata={
             "help": "Azure managed identity client id.",
             "required": False,
@@ -209,6 +209,23 @@ class ExecutorSettings(ExecutorSettingsBase):
         },
     )
 
+    def __post_init__(self):
+
+        # parse batch account name
+        try:
+            parsed = urlparse(self.account_url)
+            self.batch_account_name = parsed.netloc.split(".")[0]
+
+        except Exception as e:
+            raise WorkflowError(
+                f"Unable to parse bbtch account url ({self.account_url}): {e}"
+                )
+
+        # parse subscription and resource id
+        if self.managed_identity_resource_id is not None:
+            self.subscription_id = self.managed_identity_resource_id.split("/")[2]
+            self.resource_group = self.managed_identity_resource_id.split("/")[4]
+
 
 # Required:
 # Specify common settings shared by various executors.
@@ -236,11 +253,8 @@ class Executor(RemoteExecutor):
     def __post_init__(self):
         AZURE_BATCH_RESOURCE_ENDPOINT = "https://batch.core.windows.net/"
 
-        # setup batch configuration sets self.batch_config
-        self.batch_config = AzBatchConfig(
-            executor_settings=self.workflow.executor_settings
-        )
-        self.logger.debug(f"AzBatchConfig: {self.mask_batch_config_as_string()}")
+        self.settings: ExecutorSettings = self.workflow.executor_settings
+        self.logger.debug(f"ExecutorSettings: {pformat(self.settings, indent=2)}")
 
         # handle case on OSX with /var/ symlinked to /private/var/ causing
         # issues with workdir not matching other workflow file dirs
@@ -253,45 +267,45 @@ class Executor(RemoteExecutor):
 
         # Pool ids can only contain any combination of alphanumeric characters along
         # with dash and underscore.
-        ts = datetime.datetime.now().strftime("%Y-%m%dT%H-%M-%S")
+        ts = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
         self.pool_id = f"snakepool-{ts:s}"
         self.job_id = f"snakejob-{ts:s}"
 
         self.envvars = list(self.workflow.envvars) or []
 
         # enable autoscale flag
-        self.az_batch_enable_autoscale = self.workflow.executor_settings.autoscale
+        self.az_batch_enable_autoscale = self.settings.autoscale
 
         # authenticate batch client from SharedKeyCredentials
         if (
-            self.batch_config.batch_account_key is not None
-            and self.batch_config.managed_identity_client_id is None
+            self.settings.account_key is not None
+            and self.settings.managed_identity_client_id is None
         ):
             self.logger.debug("Using batch account key for authentication...")
             creds = SharedKeyCredentials(
-                self.batch_config.batch_account_name,
-                self.batch_config.batch_account_key,
+                self.settings.batch_account_name,
+                self.settings.account_key,
             )
         # else authenticate with managed indentity client id
-        elif self.batch_config.managed_identity_client_id is not None:
+        elif self.settings.managed_identity_client_id is not None:
             self.logger.debug("Using managed identity batch authentication...")
             creds = DefaultAzureCredential(
-                managed_identity_client_id=self.batch_config.managed_identity_client_id
+                managed_identity_client_id=self.settings.managed_identity_client_id
             )
             creds = AzureIdentityCredentialAdapter(
                 credential=creds, resource_id=AZURE_BATCH_RESOURCE_ENDPOINT
             )
 
         self.batch_client = BatchServiceClient(
-            creds, batch_url=self.batch_config.batch_account_url
+            creds, batch_url=self.settings.account_url
         )
 
-        if self.batch_config.managed_identity_resource_id is not None:
+        if self.settings.managed_identity_resource_id is not None:
             self.batch_mgmt_client = BatchManagementClient(
                 credential=DefaultAzureCredential(
-                    managed_identity_client_id=self.batch_config.managed_identity_client_id  # noqa
+                    managed_identity_client_id=self.settings.managed_identity_client_id  # noqa
                 ),
-                subscription_id=self.batch_config.subscription_id,
+                subscription_id=self.settings.subscription_id,
             )
 
         self.create_batch_pool()
@@ -343,7 +357,7 @@ class Executor(RemoteExecutor):
 
         # This is the docker image we want to run
         task_container_settings = batchmodels.TaskContainerSettings(
-            image_name=self.workflow.executor_settings.container_image,
+            image_name=self.settings.container_image,
             container_run_options="--rm",
         )
 
@@ -366,7 +380,7 @@ class Executor(RemoteExecutor):
         job_info = SubmittedJobInfo(job, external_jobid=task_id)
         self.logger.info(f"Added AzBatch task {task_id}")
         self.logger.debug(
-            f"Task details: {pformat(self.mask_sas_urls(task.__dict__), indent=2)}"
+            f"Task details: {pformat(task.__dict__, indent=2)}"
         )
         self.report_job_submission(job_info)
 
@@ -490,18 +504,18 @@ class Executor(RemoteExecutor):
         """Creates a pool of compute nodes"""
 
         image_ref = bsc.models.ImageReference(
-            publisher=self.batch_config.batch_pool_image_publisher,
-            offer=self.batch_config.batch_pool_image_offer,
-            sku=self.batch_config.batch_pool_image_sku,
+            publisher=self.settings.pool_image_publisher,
+            offer=self.settings.pool_image_offer,
+            sku=self.settings.pool_image_sku,
             version="latest",
         )
 
         # optional subnet network configuration
         # requires AAD batch auth insead of batch key auth
         network_config = None
-        if self.batch_config.batch_pool_subnet_id is not None:
+        if self.settings.pool_subnet_id is not None:
             network_config = batchmodels.NetworkConfiguration(
-                subnet_id=self.batch_config.batch_pool_subnet_id
+                subnet_id=self.settings.pool_subnet_id
             )
 
         # configure a container registry
@@ -510,7 +524,7 @@ class Executor(RemoteExecutor):
         #  https://docs.microsoft.com/en-us/azure/batch/batch-docker-container-workloads#prefetch-images-for-container-configuration
         container_config = batchmodels.ContainerConfiguration(
             type="dockerCompatible",
-            container_image_names=[self.workflow.executor_settings.container_image],
+            container_image_names=[self.settings.container_image],
         )
 
         user = None
@@ -518,16 +532,16 @@ class Executor(RemoteExecutor):
         identity_ref = None
         registry_conf = None
 
-        if self.batch_config.container_registry_url is not None:
+        if self.settings.container_registry_url is not None:
             if (
-                self.batch_config.container_registry_user is not None
-                and self.batch_config.container_registry_pass is not None
+                self.settings.container_registry_user is not None
+                and self.settings.container_registry_pass is not None
             ):
-                user = self.batch_config.container_registry_user
-                passw = self.batch_config.container_registry_pass
-            elif self.batch_config.managed_identity_resource_id is not None:
+                user = self.settings.container_registry_user
+                passw = self.settings.container_registry_pass
+            elif self.settings.managed_identity_resource_id is not None:
                 identity_ref = batchmodels.ComputeNodeIdentityReference(
-                    resource_id=self.batch_config.managed_identity_resource_id
+                    resource_id=self.settings.managed_identity_resource_id
                 )
             else:
                 raise WorkflowError(
@@ -539,7 +553,7 @@ class Executor(RemoteExecutor):
 
             registry_conf = [
                 batchmodels.ContainerRegistry(
-                    registry_server=self.batch_config.container_registry_url,
+                    registry_server=self.settings.container_registry_url,
                     identity_reference=identity_ref,
                     user_name=str(user),
                     password=str(passw),
@@ -550,7 +564,7 @@ class Executor(RemoteExecutor):
             #  https://docs.microsoft.com/en-us/azure/batch/batch-docker-container-workloads#prefetch-images-for-container-configuration
             container_config = batchmodels.ContainerConfiguration(
                 type="dockerCompatible",
-                container_image_names=[self.workflow.executor_settings.container_image],
+                container_image_names=[self.settings.container_image],
                 container_registries=registry_conf,
             )
 
@@ -558,7 +572,7 @@ class Executor(RemoteExecutor):
         start_task = None
 
         # if configured us start task bash script from sas url
-        if self.batch_config.batch_node_start_task_sasurl is not None:
+        if self.settings.node_start_task_sasurl is not None:
             _SIMPLE_TASK_NAME = "start_task.sh"
             start_task_admin = batchmodels.UserIdentity(
                 auto_user=batchmodels.AutoUserSpecification(
@@ -571,7 +585,7 @@ class Executor(RemoteExecutor):
                 resource_files=[
                     batchmodels.ResourceFile(
                         file_path=_SIMPLE_TASK_NAME,
-                        http_url=self.batch_config.batch_node_start_task_sasurl,
+                        http_url=self.settings.node_start_task_sasurl,
                     )
                 ],
                 user_identity=start_task_admin,
@@ -579,10 +593,10 @@ class Executor(RemoteExecutor):
 
         # autoscale requires the initial dedicated node count to be zero
         if self.az_batch_enable_autoscale:
-            self.batch_config.batch_pool_node_count = 0
+            self.settings.pool_node_count = 0
 
         node_communication_strategy = None
-        if self.batch_config.batch_node_communication_mode is not None:
+        if self.settings.node_communication_mode is not None:
             node_communication_strategy = batchmodels.NodeCommunicationMode.simplified
 
         new_pool = batchmodels.PoolAddParameter(
@@ -590,17 +604,17 @@ class Executor(RemoteExecutor):
             virtual_machine_configuration=batchmodels.VirtualMachineConfiguration(
                 image_reference=image_ref,
                 container_configuration=container_config,
-                node_agent_sku_id=self.batch_config.batch_pool_vm_node_agent_sku_id,
+                node_agent_sku_id=self.settings.pool_vm_node_agent_sku_id,
             ),
             network_configuration=network_config,
-            vm_size=self.batch_config.batch_pool_vm_size,
-            target_dedicated_nodes=self.batch_config.batch_pool_node_count,
+            vm_size=self.settings.pool_vm_size,
+            target_dedicated_nodes=self.settings.pool_node_count,
             target_node_communication_mode=node_communication_strategy,
             target_low_priority_nodes=0,
             start_task=start_task,
-            task_slots_per_node=self.batch_config.batch_tasks_per_node,
+            task_slots_per_node=self.settings.tasks_per_node,
             task_scheduling_policy=batchmodels.TaskSchedulingPolicy(
-                node_fill_type=self.batch_config.batch_node_fill_type
+                node_fill_type=self.settings.node_fill_type
             ),
         )
 
@@ -632,17 +646,17 @@ class Executor(RemoteExecutor):
 
             # update pool with managed identity, enables batch nodes to act as managed
             # identity
-            if self.batch_config.managed_identity_resource_id is not None:
+            if self.settings.managed_identity_resource_id is not None:
                 mid = mgmtbatchmodels.BatchPoolIdentity(
                     type=mgmtbatchmodels.PoolIdentityType.user_assigned,
                     user_assigned_identities={
-                        self.batch_config.managed_identity_resource_id: mgmtbatchmodels.UserAssignedIdentities()  # noqa
+                        self.settings.managed_identity_resource_id: mgmtbatchmodels.UserAssignedIdentities()  # noqa
                     },
                 )
                 params = mgmtbatchmodels.Pool(identity=mid)
                 self.batch_mgmt_client.pool.update(
-                    resource_group_name=self.batch_config.resource_group,
-                    account_name=self.batch_config.batch_account_name,
+                    resource_group_name=self.settings.resource_group,
+                    account_name=self.settings.batch_account_name,
                     pool_name=self.pool_id,
                     parameters=params,
                 )
@@ -667,40 +681,6 @@ class Executor(RemoteExecutor):
                 pool_info=bsc.models.PoolInformation(pool_id=self.pool_id),
             )
         )
-
-    # mask_dict_vals masks sensitive keys from a dictionary of values for
-    # logging used to mask dicts with sensitive information from logging
-    @staticmethod
-    def mask_dict_vals(mdict: dict, keys: list):
-        ret_dict = mdict.copy()
-        for k in keys:
-            if k in ret_dict.keys() and ret_dict[k] is not None:
-                ret_dict[k] = 10 * "*"
-        return ret_dict
-
-    # mask blob url is used to mask url values that may contain SAS
-    # token information from being printed to the logs
-    def mask_sas_urls(self, attrs: dict):
-        attrs_new = attrs.copy()
-        sas_pattern = r"\?[^=]+=([^?'\"]+)"
-        mask = 10 * "*"
-
-        for k, value in attrs.items():
-            if value is not None and re.search(sas_pattern, str(value)):
-                attrs_new[k] = re.sub(sas_pattern, mask, value)
-
-        return attrs_new
-
-    def mask_batch_config_as_string(self) -> str:
-        masked_keys = self.mask_dict_vals(
-            self.batch_config.__dict__,
-            [
-                "batch_account_key",
-                "managed_identity_client_id",
-            ],
-        )
-        masked_urls = self.mask_sas_urls(masked_keys)
-        return pformat(masked_urls, indent=2)
 
     # from https://github.com/Azure-Samples/batch-python-quickstart/blob/master/src/python_quickstart_client.py # noqa
     @staticmethod
@@ -733,97 +713,6 @@ class Executor(RemoteExecutor):
             content = ""
 
         return content
-
-
-# TODO: clean this up, we can just use executor settings
-class AzBatchConfig:
-    def __init__(self, executor_settings: ExecutorSettings):
-        # configure defaults
-        self.batch_account_url = executor_settings.account_url
-
-        # parse batch account name
-        try:
-            parsed = urlparse(self.batch_account_url)
-            self.batch_account_name = parsed.netloc.split(".")[0]
-        except Exception as e:
-            print(
-                f"Unable to parse batch account url ({self.batch_account_url}): {e}"
-                )
-
-        self.batch_account_key = executor_settings.account_key
-
-        # optional subnet config
-        self.batch_pool_subnet_id = executor_settings.pool_subnet_id
-
-        # managed identity resource id configuration
-        self.managed_identity_resource_id = (
-            executor_settings.managed_identity_resource_id
-        )
-
-        # parse subscription and resource id
-        if self.managed_identity_resource_id is not None:
-            self.subscription_id = self.managed_identity_resource_id.split("/")[2]
-            self.resource_group = self.managed_identity_resource_id.split("/")[4]
-
-        self.managed_identity_client_id = executor_settings.managed_identity_client_id
-
-        if self.batch_pool_subnet_id is not None:
-            if (
-                self.managed_identity_client_id is None
-                or self.managed_identity_resource_id is None
-            ):
-                sys.exit(
-                    "Error: managed_identity_resource_id, "
-                    "managed_identity_client_id must be set when deploying batch "
-                    "nodes into a private subnet!"
-                )
-
-            # parse account details necessary for batch client authentication steps
-            if self.batch_pool_subnet_id.split("/")[2] != self.subscription_id:
-                raise WorkflowError(
-                    "Error: managed identity must be in the same subscription as the "
-                    "batch pool subnet."
-                )
-
-            if self.batch_pool_subnet_id.split("/")[4] != self.resource_group:
-                raise WorkflowError(
-                    "Error: managed identity must be in the same resource group "
-                    "as the batch pool subnet."
-                )
-
-        # sas url to a batch node start task bash script
-        self.batch_node_start_task_sasurl = executor_settings.node_start_task_sasurl
-
-        # options configured with env vars or default
-        self.batch_pool_image_publisher = executor_settings.pool_image_publisher
-        self.batch_pool_image_offer = executor_settings.pool_image_offer
-        self.batch_pool_image_sku = executor_settings.pool_image_sku
-        self.batch_pool_vm_node_agent_sku_id = (
-            executor_settings.pool_vm_node_agent_sku_id
-        )
-        self.batch_pool_vm_size = executor_settings.pool_vm_size
-
-        # dedicated pool node count
-        self.batch_pool_node_count = executor_settings.pool_node_count
-
-        # default tasks per node
-        # see https://learn.microsoft.com/en-us/azure/batch/batch-parallel-node-tasks
-        self.batch_tasks_per_node = executor_settings.tasks_per_node
-
-        # possible values "spread" or "pack"
-        # see https://learn.microsoft.com/en-us/azure/batch/batch-parallel-node-tasks
-        self.batch_node_fill_type = executor_settings.node_fill_type
-
-        # enables simplified batch node communication if set
-        # see: https://learn.microsoft.com/en-us/azure/batch
-        # /simplified-compute-node-communication
-        self.batch_node_communication_mode = executor_settings.node_communication_mode
-
-        self.container_registry_url = executor_settings.container_registry_url
-
-        self.container_registry_user = executor_settings.container_registry_user
-
-        self.container_registry_pass = executor_settings.container_registry_pass
 
 
 # The usage of this credential helper is required to authenitcate batch with managed
