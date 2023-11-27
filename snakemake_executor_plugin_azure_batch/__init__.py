@@ -334,7 +334,7 @@ class Executor(RemoteExecutor):
 
         # A string that uniquely identifies the Task within the Job.
         task_uuid = str(uuid.uuid1())
-        task_id = f"{job.rule.name}-{task_uuid}"
+        task_id = f"{job.rules[0]}-{task_uuid}"
 
         # This is the admin user who runs the command inside the container.
         user = batchmodels.AutoUserSpecification(
@@ -390,34 +390,29 @@ class Executor(RemoteExecutor):
         self.logger.debug(f"Monitoring {len(active_jobs)} active AzBatch tasks")
         for batch_job in active_jobs:
             async with self.status_rate_limiter:
-                task = self.batch_client.task.get(self.job_id, batch_job.task_id)
+                task: batchmodels.CloudTask = self.batch_client.task.get(self.job_id, batch_job.external_jobid)
 
             if task.state == batchmodels.TaskState.completed:
-                stderr = self._get_task_output(self.job_id, batch_job.task_id, "stderr")
-                stdout = self._get_task_output(self.job_id, batch_job.task_id, "stdout")
+                stderr = self._get_task_output(self.job_id, batch_job.external_jobid, "stderr")
+                stdout = self._get_task_output(self.job_id, batch_job.external_jobid, "stdout")
 
-                if (
-                    task.execution_info.result
-                    == batchmodels.TaskExecutionResult.failure
-                ):
-                    self.report_job_error(batch_job, stderr=stderr, stdout=stdout)
-                elif (
-                    task.execution_info.result
-                    == batchmodels.TaskExecutionResult.success
-                ):
-                    self.report_job_success(batch_job)
+                ei: batchmodels.TaskExecutionInformation = task.execution_info
+                if ei is not None:
+                    if ei.result == batchmodels.TaskExecutionResult.failure:
+                        self.report_job_error(batch_job, stderr=stderr, stdout=stdout)
+                    elif ei.result == batchmodels.TaskExecutionResult.success:
+                        self.report_job_success(batch_job)
+                    else:
+                        self.logger.error("Unknown Azure task execution result: {ei.__dict__}")
+                        self.report_job_error(batch_job, stderr=stderr, stdout=stdout)
                 else:
-                    self.logger.error(
-                        "Unknown Azure task execution result: {}".format(
-                            task.execution_info.result
-                        )
-                    )
+                    self.logger.error("Unknown Azure task execution result")
                     self.report_job_error(batch_job, stderr=stderr, stdout=stdout)
 
             # The operation is still running
             else:
                 self.logger.debug(
-                    f"task {batch_job.task_id}: creation_time={task.creation_time} "
+                    f"task {batch_job.external_jobid}: creation_time={task.creation_time} "
                     f"state={task.state} node_info={task.node_info}\n"
                 )
                 # report as still running
@@ -730,6 +725,7 @@ class Executor(RemoteExecutor):
         return content
 
 
+# TODO: clean this up, we can just use executor settings
 class AzBatchConfig:
     def __init__(self, executor_settings: ExecutorSettings):
         # configure defaults
