@@ -742,8 +742,13 @@ class AzBatchConfig:
         self.batch_account_url = executor_settings.account_url
 
         # parse batch account name
-        result = urlparse(self.batch_account_url)
-        self.batch_account_name = str.split(result.hostname, ".")[0]
+        try:
+            parsed = urlparse(self.batch_account_url)
+            self.batch_account_name = parsed.netloc.split(".")[0]
+        except Exception as e:
+            print(
+                f"Unable to parse batch account url ({self.batch_account_url}): {e}"
+                )
 
         self.batch_account_key = executor_settings.account_key
 
@@ -819,14 +824,6 @@ class AzBatchConfig:
         self.container_registry_user = executor_settings.container_registry_user
 
         self.container_registry_pass = executor_settings.container_registry_pass
-
-    @staticmethod
-    def set_or_default(evar: str, default: Optional[str]):
-        gotvar = os.getenv(evar)
-        if gotvar is not None:
-            return gotvar
-        else:
-            return default
 
 
 # The usage of this credential helper is required to authenitcate batch with managed
