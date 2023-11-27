@@ -384,7 +384,7 @@ class Executor(RemoteExecutor):
         except Exception as e:
             self.report_job_error(
                 job_info, msg=f"Unable to fetch batch task info: {t}: {e}"
-                )
+            )
 
         self.logger.info(f"Added AzBatch task {task_id}: {t.__dict__}")
         self.report_job_submission(job_info)
