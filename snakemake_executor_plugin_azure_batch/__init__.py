@@ -181,8 +181,8 @@ class ExecutorSettings(ExecutorSettingsBase):
         metadata={
             "help": "The snakemake base image used to run snakemake",
             "required": False,
-            "env_var": True
-        }
+            "env_var": True,
+        },
     )
     container_registry_url: Optional[str] = field(
         default=None,
@@ -231,8 +231,7 @@ common_settings = CommonSettings(
 )
 
 
-# Required:
-# Implementation of your executor
+# Azure Batch Executor
 class Executor(RemoteExecutor):
     def __post_init__(self):
         AZURE_BATCH_RESOURCE_ENDPOINT = "https://batch.core.windows.net/"
@@ -344,7 +343,8 @@ class Executor(RemoteExecutor):
 
         # This is the docker image we want to run
         task_container_settings = batchmodels.TaskContainerSettings(
-            image_name=self.workflow.executor_settings.container_image, container_run_options="--rm"
+            image_name=self.workflow.executor_settings.container_image,
+            container_run_options="--rm",
         )
 
         # https://docs.microsoft.com/en-us/python/api/azure-batch/azure.batch.models.taskaddparameter?view=azure-python # noqa
@@ -390,11 +390,17 @@ class Executor(RemoteExecutor):
         self.logger.debug(f"Monitoring {len(active_jobs)} active AzBatch tasks")
         for batch_job in active_jobs:
             async with self.status_rate_limiter:
-                task: batchmodels.CloudTask = self.batch_client.task.get(self.job_id, batch_job.external_jobid)
+                task: batchmodels.CloudTask = self.batch_client.task.get(
+                    self.job_id, batch_job.external_jobid
+                )
 
             if task.state == batchmodels.TaskState.completed:
-                stderr = self._get_task_output(self.job_id, batch_job.external_jobid, "stderr")
-                stdout = self._get_task_output(self.job_id, batch_job.external_jobid, "stdout")
+                stderr = self._get_task_output(
+                    self.job_id, batch_job.external_jobid, "stderr"
+                )
+                stdout = self._get_task_output(
+                    self.job_id, batch_job.external_jobid, "stdout"
+                )
 
                 ei: batchmodels.TaskExecutionInformation = task.execution_info
                 if ei is not None:
@@ -403,7 +409,9 @@ class Executor(RemoteExecutor):
                     elif ei.result == batchmodels.TaskExecutionResult.success:
                         self.report_job_success(batch_job)
                     else:
-                        self.logger.error("Unknown Azure task execution result: {ei.__dict__}")
+                        self.logger.error(
+                            "Unknown Azure task execution result: {ei.__dict__}"
+                        )
                         self.report_job_error(batch_job, stderr=stderr, stdout=stdout)
                 else:
                     self.logger.error("Unknown Azure task execution result")
@@ -412,7 +420,8 @@ class Executor(RemoteExecutor):
             # The operation is still running
             else:
                 self.logger.debug(
-                    f"task {batch_job.external_jobid}: creation_time={task.creation_time} "
+                    f"task {batch_job.external_jobid}: "
+                    f"creation_time={task.creation_time} "
                     f"state={task.state} node_info={task.node_info}\n"
                 )
                 # report as still running
@@ -500,7 +509,8 @@ class Executor(RemoteExecutor):
         # Specify container configuration, fetching an image
         #  https://docs.microsoft.com/en-us/azure/batch/batch-docker-container-workloads#prefetch-images-for-container-configuration
         container_config = batchmodels.ContainerConfiguration(
-            type="dockerCompatible", container_image_names=[self.workflow.executor_settings.container_image]
+            type="dockerCompatible",
+            container_image_names=[self.workflow.executor_settings.container_image],
         )
 
         user = None
