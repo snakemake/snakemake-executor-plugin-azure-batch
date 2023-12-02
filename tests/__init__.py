@@ -25,7 +25,7 @@ class TestWorkflowsBase(snakemake.common.tests.TestWorkflowsMinioPlayStorageBase
         self,
     ) -> snakemake.settings.RemoteExecutionSettings:
         return snakemake.settings.RemoteExecutionSettings(
-            seconds_between_status_checks=3,
+            seconds_between_status_checks=5,
             envvars=self.get_envvars(),
             # TODO remove once we have switched to stable snakemake for dev
             container_image="snakemake/snakemake:latest",
