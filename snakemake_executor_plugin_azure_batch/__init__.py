@@ -3,38 +3,35 @@ __copyright__ = "Copyright 2023, Snakemake community"
 __email__ = "johannes.koester@uni-due.de"
 __license__ = "MIT"
 
-from dataclasses import dataclass, field
-import os
 import datetime
 import io
+import os
 import shlex
 import uuid
+from dataclasses import dataclass, field
 from pprint import pformat
-from urllib.parse import urlparse
 from typing import AsyncGenerator, List, Optional
+from urllib.parse import urlparse
 
-from snakemake_interface_executor_plugins.executors.base import SubmittedJobInfo
-from snakemake_interface_executor_plugins.executors.remote import RemoteExecutor
-from snakemake_interface_executor_plugins.settings import (
-    ExecutorSettingsBase,
-    CommonSettings,
-)
-from snakemake_interface_executor_plugins.jobs import (
-    JobExecutorInterface,
-)
-from snakemake_interface_common.exceptions import WorkflowError
-
-from azure.core.pipeline import PipelineContext, PipelineRequest
-from azure.core.pipeline.transport import HttpRequest
-from azure.core.pipeline.policies import BearerTokenCredentialPolicy
-from azure.identity import DefaultAzureCredential
-from azure.batch import BatchServiceClient
-from azure.batch.batch_auth import SharedKeyCredentials
-from azure.mgmt.batch import BatchManagementClient
 import azure.batch._batch_service_client as bsc
 import azure.batch.models as batchmodels
 import azure.mgmt.batch.models as mgmtbatchmodels
 import msrest.authentication as msa
+from azure.batch import BatchServiceClient
+from azure.batch.batch_auth import SharedKeyCredentials
+from azure.core.pipeline import PipelineContext, PipelineRequest
+from azure.core.pipeline.policies import BearerTokenCredentialPolicy
+from azure.core.pipeline.transport import HttpRequest
+from azure.identity import DefaultAzureCredential
+from azure.mgmt.batch import BatchManagementClient
+from snakemake_interface_common.exceptions import WorkflowError
+from snakemake_interface_executor_plugins.executors.base import SubmittedJobInfo
+from snakemake_interface_executor_plugins.executors.remote import RemoteExecutor
+from snakemake_interface_executor_plugins.jobs import JobExecutorInterface
+from snakemake_interface_executor_plugins.settings import (
+    CommonSettings,
+    ExecutorSettingsBase,
+)
 
 
 # Optional:
@@ -380,13 +377,11 @@ class Executor(RemoteExecutor):
             self.report_job_error(job_info, msg=f"Unable to add batch task: {e}")
 
         try:
-            t = self.batch_client.task.get(self.job_id)
+            t = self.batch_client.task.get(self.job_id, task_id)
+            self.logger.info(f"Added AzBatch task {task_id}: {t.__dict__}")
         except Exception as e:
-            self.report_job_error(
-                job_info, msg=f"Unable to fetch batch task info: {t}: {e}"
-            )
+            self.report_job_error(job_info, msg=f"Unable to fetch batch task info: {e}")
 
-        self.logger.info(f"Added AzBatch task {task_id}: {t.__dict__}")
         self.report_job_submission(job_info)
 
     async def check_active_jobs(
@@ -408,10 +403,17 @@ class Executor(RemoteExecutor):
         #    # query remote middleware here
         self.logger.debug(f"Monitoring {len(active_jobs)} active AzBatch tasks")
         for batch_job in active_jobs:
+            if batch_job is None or batch_job.external_jobid is None:
+                self.logger.debug(
+                    "Encountered a None batch_job or "
+                    " batch_job.external_jobid, skipping..."
+                )
+                continue
+
             async with self.status_rate_limiter:
                 try:
                     task: batchmodels.CloudTask = self.batch_client.task.get(
-                        self.job_id, batch_job.external_jobid
+                        job_id=self.job_id, task_id=batch_job.external_jobid
                     )
                 except Exception as e:
                     self.report_job_error(
@@ -430,7 +432,7 @@ class Executor(RemoteExecutor):
                 if ei is not None:
                     if ei.result == batchmodels.TaskExecutionResult.failure:
                         self.logger.error(
-                            f"Azure Batch wask execution failure: "
+                            f"Azure Batch execution failure: "
                             f" {ei.failure_info.__dict__}"
                         )
                         self.report_job_error(batch_job, stderr=stderr, stdout=stdout)
