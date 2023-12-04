@@ -173,14 +173,6 @@ class ExecutorSettings(ExecutorSettingsBase):
             "env_var": False,
         },
     )
-    container_image: Optional[str] = field(
-        default="snakemake/snakemake:latest",
-        metadata={
-            "help": "The snakemake base image used to run snakemake",
-            "required": False,
-            "env_var": True,
-        },
-    )
     container_registry_url: Optional[str] = field(
         default=None,
         metadata={
@@ -249,6 +241,8 @@ class Executor(RemoteExecutor):
     def __post_init__(self):
         AZURE_BATCH_RESOURCE_ENDPOINT = "https://batch.core.windows.net/"
 
+        # the snakemake/snakemake:latest container image
+        self.container_image = self.workflow.remote_execution_settings.container_image
         self.settings: ExecutorSettings = self.workflow.executor_settings
         self.logger.debug(f"ExecutorSettings: {pformat(self.settings, indent=2)}")
 
@@ -351,7 +345,7 @@ class Executor(RemoteExecutor):
 
         # This is the docker image we want to run
         task_container_settings = batchmodels.TaskContainerSettings(
-            image_name=self.settings.container_image,
+            image_name=self.container_image,
             container_run_options="--rm",
         )
 
@@ -542,7 +536,7 @@ class Executor(RemoteExecutor):
         #  https://docs.microsoft.com/en-us/azure/batch/batch-docker-container-workloads#prefetch-images-for-container-configuration
         container_config = batchmodels.ContainerConfiguration(
             type="dockerCompatible",
-            container_image_names=[self.settings.container_image],
+            container_image_names=[self.container_image],
         )
 
         user = None
@@ -582,7 +576,7 @@ class Executor(RemoteExecutor):
             #  https://docs.microsoft.com/en-us/azure/batch/batch-docker-container-workloads#prefetch-images-for-container-configuration
             container_config = batchmodels.ContainerConfiguration(
                 type="dockerCompatible",
-                container_image_names=[self.settings.container_image],
+                container_image_names=[self.container_image],
                 container_registries=registry_conf,
             )
 
