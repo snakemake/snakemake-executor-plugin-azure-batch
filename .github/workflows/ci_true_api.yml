@@ -32,7 +32,7 @@ jobs:
 
       - name: Run pytest
         env:
-          SNAKEMAKE_AZURE_BATCH_ACCOUNT_URL: "${{ secrets.AZ_BATCH_ACCOUNT_URL }}"
-          SNAKEMAKE_AZURE_BATCH_ACCOUNT_KEY: "${{ secrets.AZ_BATCH_KEY }}"
+          SNAKEMAKE_AZURE_BATCH_ACCOUNT_URL: "${{ secrets.SNAKEMAKE_AZURE_BATCH_ACCOUNT_URL }}"
+          SNAKEMAKE_AZURE_BATCH_ACCOUNT_KEY: "${{ secrets.SNAKEMAKE_AZURE_BATCH_ACCOUNT_KEY }}"
         run: 
           poetry run pytest tests/tests_true_api.py -v

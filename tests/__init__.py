@@ -12,7 +12,7 @@ class TestWorkflowsBase(snakemake.common.tests.TestWorkflowsMinioPlayStorageBase
         return "azure-batch"
 
     def get_executor_settings(self) -> Optional[ExecutorSettingsBase]:
-        # instatiate ExecutorSettings of this plugin as appropriate
+        # instantiate ExecutorSettings of this plugin as appropriate
         return ExecutorSettings(
             account_url=os.getenv("SNAKEMAKE_AZURE_BATCH_ACCOUNT_URL"),
             account_key=os.getenv("SNAKEMAKE_AZURE_BATCH_ACCOUNT_KEY"),
