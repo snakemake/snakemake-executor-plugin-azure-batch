@@ -16,12 +16,8 @@ from urllib.parse import urlparse
 import azure.batch._batch_service_client as bsc
 import azure.batch.models as batchmodels
 import azure.mgmt.batch.models as mgmtbatchmodels
-import msrest.authentication as msa
 from azure.batch import BatchServiceClient
 from azure.batch.batch_auth import SharedKeyCredentials
-from azure.core.pipeline import PipelineContext, PipelineRequest
-from azure.core.pipeline.policies import BearerTokenCredentialPolicy
-from azure.core.pipeline.transport import HttpRequest
 from azure.identity import DefaultAzureCredential
 from azure.mgmt.batch import BatchManagementClient
 from snakemake_interface_common.exceptions import WorkflowError
@@ -32,6 +28,12 @@ from snakemake_interface_executor_plugins.settings import (
     CommonSettings,
     ExecutorSettingsBase,
 )
+
+from snakemake_executor_plugin_azure_batch.constant import (
+    AZURE_BATCH_RESOURCE_ENDPOINT,
+    DEFAULT_AUTO_SCALE_FORMULA,
+)
+from snakemake_executor_plugin_azure_batch.util import AzureIdentityCredentialAdapter
 
 
 # Optional:
@@ -239,8 +241,6 @@ common_settings = CommonSettings(
 # Azure Batch Executor
 class Executor(RemoteExecutor):
     def __post_init__(self):
-        AZURE_BATCH_RESOURCE_ENDPOINT = "https://batch.core.windows.net/"
-
         # the snakemake/snakemake:latest container image
         self.container_image = self.workflow.remote_execution_settings.container_image
         self.settings: ExecutorSettings = self.workflow.executor_settings
@@ -637,19 +637,10 @@ class Executor(RemoteExecutor):
             self.batch_client.pool.add(new_pool)
 
             if self.az_batch_enable_autoscale:
-                # define the autoscale formula
-                formula = (
-                    "$samples = $PendingTasks.GetSamplePercent(TimeInterval_Minute * 5);"  # noqa
-                    "$tasks = $samples < 70 ? max(0,$PendingTasks.GetSample(1)) : max( $PendingTasks.GetSample(1), avg($PendingTasks.GetSample(TimeInterval_Minute * 5)));"  # noqa
-                    "$targetVMs = $tasks > 0? $tasks:max(0, $TargetDedicatedNodes/2);"
-                    "$TargetDedicatedNodes = max(0, min($targetVMs, 10));"
-                    "$NodeDeallocationOption = taskcompletion;"
-                )
-
                 # Enable autoscale; specify the formula
                 self.batch_client.pool.enable_auto_scale(
                     self.pool_id,
-                    auto_scale_formula=formula,
+                    auto_scale_formula=DEFAULT_AUTO_SCALE_FORMULA,
                     # the minimum allowed autoscale interval is 5 minutes
                     auto_scale_evaluation_interval=datetime.timedelta(minutes=5),
                     pool_enable_auto_scale_options=None,
@@ -729,52 +720,3 @@ class Executor(RemoteExecutor):
             content = ""
 
         return content
-
-
-# The usage of this credential helper is required to authenitcate batch with managed
-# identity credentials
-# because not all Azure SDKs support the azure.identity credentials yet, and batch is
-# one of them.
-# ref1: https://gist.github.com/lmazuel/cc683d82ea1d7b40208de7c9fc8de59d
-# ref2: https://gist.github.com/lmazuel/cc683d82ea1d7b40208de7c9fc8de59d
-class AzureIdentityCredentialAdapter(msa.BasicTokenAuthentication):
-    def __init__(
-        self,
-        credential=None,
-        resource_id="https://management.azure.com/.default",
-        **kwargs,
-    ):
-        """Adapt any azure-identity credential to work with SDK that needs
-        azure.common.credentials or msrestazure.
-
-        Default resource is ARM (syntax of endpoint v2)
-        :param credential: Any azure-identity credential (DefaultAzureCredential by
-                           default)
-        :param str resource_id: The scope to use to get the token (default ARM)
-        """
-        super(AzureIdentityCredentialAdapter, self).__init__(None)
-        if credential is None:
-            credential = DefaultAzureCredential()
-        self._policy = BearerTokenCredentialPolicy(credential, resource_id, **kwargs)
-
-    def _make_request(self):
-        return PipelineRequest(
-            HttpRequest("AzureIdentityCredentialAdapter", "https://fakeurl"),
-            PipelineContext(None),
-        )
-
-    def set_token(self):
-        """Ask the azure-core BearerTokenCredentialPolicy policy to get a token.
-        Using the policy gives us for free the caching system of azure-core.
-        We could make this code simpler by using private method, but by definition
-        I can't assure they will be there forever, so mocking a fake call to the policy
-        to extract the token, using 100% public API."""
-        request = self._make_request()
-        self._policy.on_request(request)
-        # Read Authorization, and get the second part after Bearer
-        token = request.http_request.headers["Authorization"].split(" ", 1)[1]
-        self.token = {"access_token": token}
-
-    def signed_session(self, session=None):
-        self.set_token()
-        return super(AzureIdentityCredentialAdapter, self).signed_session(session)
