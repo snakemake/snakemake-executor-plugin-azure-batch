@@ -404,17 +404,15 @@ class Executor(RemoteExecutor):
             ei: batchmodels.TaskExecutionInformation = task.execution_info
             if ei is not None:
                 if ei.result == batchmodels.TaskExecutionResult.failure:
-                    self.logger.error(
-                        f"Azure Batch execution failure: "
-                        f" {ei.failure_info.__dict__}"
-                    )
-                    self.report_job_error(job, stderr=stderr, stdout=stdout)
+                    msg = f"Azure Batch execution failure: {ei.failure_info.__dict__}"
+                    self.report_job_error(job, msg=msg, stderr=stderr, stdout=stdout)
                 elif ei.result == batchmodels.TaskExecutionResult.success:
                     self.report_job_success(job)
                 else:
+                    msg = f"Unknown Azure task execution result: {ei.__dict__}"
                     self.report_job_error(
                         job,
-                        msg=f"Unknown Azure task execution result: {ei.__dict__}",
+                        msg=msg,
                         stderr=stderr,
                         stdout=stdout,
                     )
