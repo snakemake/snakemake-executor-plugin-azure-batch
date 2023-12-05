@@ -1,7 +1,13 @@
 from unittest.mock import AsyncMock, MagicMock, patch
-from tests import TestWorkflowsBase
 
-from azure.batch.models import CloudTask, TaskState
+from azure.batch.models import (
+    CloudTask,
+    TaskExecutionInformation,
+    TaskExecutionResult,
+    TaskState,
+)
+
+from tests import TestWorkflowsBase
 
 
 class TestWorkflowsMocked(TestWorkflowsBase):
@@ -14,8 +20,15 @@ class TestWorkflowsMocked(TestWorkflowsBase):
     @patch(
         "azure.batch.operations.TaskOperations.get",
         new=MagicMock(
-            return_value=CloudTask(state=TaskState.completed),
             autospec=True,
+            return_value=CloudTask(
+                state=TaskState.completed,
+                execution_info=TaskExecutionInformation(
+                    result=TaskExecutionResult.success,
+                    retry_count=0,  # necessary inits
+                    requeue_count=0,
+                ),
+            ),
         ),
     )
     @patch(
