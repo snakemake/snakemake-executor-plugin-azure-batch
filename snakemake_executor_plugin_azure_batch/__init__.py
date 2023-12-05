@@ -395,7 +395,7 @@ class Executor(RemoteExecutor):
                 job_id=self.job_id, task_id=job.external_jobid
             )
         except Exception as e:
-            self.report_job_error(task, msg=f"Unable to get Azure Batch Task: {e}")
+            self.report_job_error(job, msg=f"Unable to get Azure Batch Task: {e}")
 
         if task.state == batchmodels.TaskState.completed:
             stderr = self._get_task_output(self.job_id, job.external_jobid, "stderr")
@@ -410,12 +410,14 @@ class Executor(RemoteExecutor):
                     )
                     self.report_job_error(job, stderr=stderr, stdout=stdout)
                 elif ei.result == batchmodels.TaskExecutionResult.success:
-                    self.report_job_success(task)
+                    self.report_job_success(job)
                 else:
-                    self.logger.error(
-                        f"Unknown Azure task execution result: {ei.__dict__}"
+                    self.report_job_error(
+                        job,
+                        msg=f"Unknown Azure task execution result: {ei.__dict__}",
+                        stderr=stderr,
+                        stdout=stdout,
                     )
-                    self.report_job_error(job, stderr=stderr, stdout=stdout)
 
         self.logger.debug(
             f"task {task.id}: "
