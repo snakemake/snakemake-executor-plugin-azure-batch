@@ -416,8 +416,6 @@ class Executor(RemoteExecutor):
                         f"Unknown Azure task execution result: {ei.__dict__}"
                     )
                     self.report_job_error(task, stderr=stderr, stdout=stdout)
-        self._report_node_errors()
-        return
 
     def _report_node_errors(self, batch_job):
         """report node errors
