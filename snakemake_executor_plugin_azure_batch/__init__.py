@@ -417,6 +417,12 @@ class Executor(RemoteExecutor):
                     )
                     self.report_job_error(task, stderr=stderr, stdout=stdout)
 
+        self.logger.debug(
+            f"task {task.external_jobid}: "
+            f"creation_time={task.creation_time} "
+            f"state={task.state} node_info={task.node_info}\n"
+        )
+
     def _report_node_errors(self, batch_job):
         """report node errors
 
@@ -489,18 +495,11 @@ class Executor(RemoteExecutor):
                 self._report_pool_errors(batch_job)
 
             async with self.status_rate_limiter:
-                # report the task failure or success
-                self._report_task_status(batch_job)
-
                 # report any node errors
                 self._report_node_errors(batch_job)
 
-                # continue
-                self.logger.debug(
-                    f"task {batch_job.external_jobid}: "
-                    f"creation_time={batch_job.creation_time} "
-                    f"state={batch_job.state} node_info={batch_job.node_info}\n"
-                )
+                # report the task failure or success
+                self._report_task_status(batch_job)
 
                 # report as still running
                 yield batch_job
