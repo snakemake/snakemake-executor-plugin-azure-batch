@@ -206,7 +206,7 @@ class ExecutorSettings(ExecutorSettingsBase):
 
         except Exception as e:
             raise WorkflowError(
-                f"Unable to parse bbtch account url ({self.account_url}): {e}"
+                f"Unable to parse batch account url ({self.account_url}): {e}"
             )
 
         # parse subscription and resource id
@@ -378,6 +378,94 @@ class Executor(RemoteExecutor):
 
         self.report_job_submission(job_info)
 
+    def _report_pool_errors(self, job: SubmittedJobInfo):
+        """report batch pool errors"""
+        errors = []
+        pool = self.batch_client.pool.get(self.pool_id)
+        if pool.resize_errors:
+            for e in pool.resize_errors:
+                err_dict = {"code": e.code, "message": e.message}
+                errors.append(err_dict)
+            self.report_job_error(job, msg=f"Batch pool error: {e}")
+
+    def _report_task_status(self, task: SubmittedJobInfo):
+        """report batch task error"""
+        try:
+            task: batchmodels.CloudTask = self.batch_client.task.get(
+                job_id=self.job_id, task_id=task.external_jobid
+            )
+        except Exception as e:
+            self.report_job_error(task, msg=f"Unable to get Azure Batch Task: {e}")
+
+        if task.state == batchmodels.TaskState.completed:
+            stderr = self._get_task_output(self.job_id, task.external_jobid, "stderr")
+            stdout = self._get_task_output(self.job_id, task.external_jobid, "stdout")
+
+            ei: batchmodels.TaskExecutionInformation = task.execution_info
+            if ei is not None:
+                if ei.result == batchmodels.TaskExecutionResult.failure:
+                    self.logger.error(
+                        f"Azure Batch execution failure: "
+                        f" {ei.failure_info.__dict__}"
+                    )
+                    self.report_job_error(task, stderr=stderr, stdout=stdout)
+                elif ei.result == batchmodels.TaskExecutionResult.success:
+                    self.report_job_success(task)
+                else:
+                    self.logger.error(
+                        f"Unknown Azure task execution result: {ei.__dict__}"
+                    )
+                    self.report_job_error(task, stderr=stderr, stdout=stdout)
+        self._report_node_errors()
+        return
+
+    def _report_node_errors(self, batch_job):
+        """report node errors
+
+        Fails if start task fails on a node, or node state becomes unusable (this can
+        happen if the container configuration is incorrect).
+
+        Streams stderr and stdout to on error.
+        """
+
+        node_list = self.batch_client.compute_node.list(self.pool_id)
+        for n in node_list:
+            if n.state == "unusable":
+                errors = []
+                if n.errors is not None:
+                    for e in n.errors:
+                        errors.append(e)
+                self.report_job_error(
+                    batch_job, msg=f"A node became unusable: {errors}"
+                )
+
+            if n.start_task_info is not None and (
+                n.start_task_info.result == batchmodels.TaskExecutionResult.failure
+            ):
+                try:
+                    stderr_file = self.batch_client.file.get_from_compute_node(
+                        self.pool_id, n.id, "/startup/stderr.txt"
+                    )
+                    stderr_stream = self._read_stream_as_string(stderr_file, "utf-8")
+                except Exception:
+                    stderr_stream = ""
+
+                try:
+                    stdout_file = self.batch_client.file.get_from_compute_node(
+                        self.pool_id, n.id, "/startup/stdout.txt"
+                    )
+                    stdout_stream = self._read_stream_as_string(stdout_file, "utf-8")
+                except Exception:
+                    stdout_stream = ""
+
+                msg = (
+                    "Azure start task execution failed: "
+                    f"{n.start_task_info.failure_info.message}."
+                )
+                self.report_job_error(
+                    batch_job, msg, sterr=stderr_stream, stdout=stdout_stream
+                )
+
     async def check_active_jobs(
         self, active_jobs: List[SubmittedJobInfo]
     ) -> AsyncGenerator[SubmittedJobInfo, None]:
@@ -396,112 +484,28 @@ class Executor(RemoteExecutor):
         # async with self.status_rate_limiter:
         #    # query remote middleware here
         self.logger.debug(f"Monitoring {len(active_jobs)} active AzBatch tasks")
+
         for batch_job in active_jobs:
-            if batch_job is None or batch_job.external_jobid is None:
-                self.logger.debug(
-                    "Encountered a None batch_job or "
-                    " batch_job.external_jobid, skipping..."
-                )
-                continue
+            async with self.status_rate_limiter:
+                # fail on pool resize errors
+                self._report_pool_errors(batch_job)
 
             async with self.status_rate_limiter:
-                try:
-                    task: batchmodels.CloudTask = self.batch_client.task.get(
-                        job_id=self.job_id, task_id=batch_job.external_jobid
-                    )
-                except Exception as e:
-                    self.report_job_error(
-                        batch_job, msg=f"Unable to get Azure Batch Task: {e}"
-                    )
+                # report the task failure or success
+                self._report_task_status(batch_job)
 
-            if task.state == batchmodels.TaskState.completed:
-                stderr = self._get_task_output(
-                    self.job_id, batch_job.external_jobid, "stderr"
-                )
-                stdout = self._get_task_output(
-                    self.job_id, batch_job.external_jobid, "stdout"
-                )
+                # report any node errors
+                self._report_node_errors(batch_job)
 
-                ei: batchmodels.TaskExecutionInformation = task.execution_info
-                if ei is not None:
-                    if ei.result == batchmodels.TaskExecutionResult.failure:
-                        self.logger.error(
-                            f"Azure Batch execution failure: "
-                            f" {ei.failure_info.__dict__}"
-                        )
-                        self.report_job_error(batch_job, stderr=stderr, stdout=stdout)
-                    elif ei.result == batchmodels.TaskExecutionResult.success:
-                        self.report_job_success(batch_job)
-                    else:
-                        self.logger.error(
-                            f"Unknown Azure task execution result: {ei.__dict__}"
-                        )
-                        self.report_job_error(batch_job, stderr=stderr, stdout=stdout)
-                # else:
-                #     self.logger.error(
-                #         f"Unknown Azure task execution result: {task.__dict__}"
-                #     )
-                #     self.report_job_error(batch_job, stderr=stderr, stdout=stdout)
-
-            # The operation is still running
-            else:
+                # continue
                 self.logger.debug(
                     f"task {batch_job.external_jobid}: "
-                    f"creation_time={task.creation_time} "
-                    f"state={task.state} node_info={task.node_info}\n"
+                    f"creation_time={batch_job.creation_time} "
+                    f"state={batch_job.state} node_info={batch_job.node_info}\n"
                 )
+
                 # report as still running
                 yield batch_job
-
-                # fail if start task fails on a node or node state becomes unusable
-                # and stream stderr stdout to stream
-                node_list = self.batch_client.compute_node.list(self.pool_id)
-                for n in node_list:
-                    # error on unusable node (this occurs if your container image fails
-                    # to pull)
-                    if n.state == "unusable":
-                        if n.errors is not None:
-                            for e in n.errors:
-                                self.logger.error(
-                                    f"Azure task error: {e.message}, "
-                                    f"{e.error_details[0].__dict__}"
-                                )
-                        self.logger.error("A node entered an unusable state, quitting.")
-                        return
-
-                    if n.start_task_info is not None and (
-                        n.start_task_info.result
-                        == batchmodels.TaskExecutionResult.failure
-                    ):
-                        try:
-                            stderr_file = self.batch_client.file.get_from_compute_node(
-                                self.pool_id, n.id, "/startup/stderr.txt"
-                            )
-                            stderr_stream = self._read_stream_as_string(
-                                stderr_file, "utf-8"
-                            )
-                        except Exception:
-                            stderr_stream = ""
-
-                        try:
-                            stdout_file = self.batch_client.file.get_from_compute_node(
-                                self.pool_id, n.id, "/startup/stdout.txt"
-                            )
-                            stdout_stream = self._read_stream_as_string(
-                                stdout_file, "utf-8"
-                            )
-                        except Exception:
-                            stdout_stream = ""
-
-                        self.logger.error(
-                            "Azure start task execution failed on node: {}.\n"
-                            "START_TASK_STDERR:{}\nSTART_TASK_STDOUT: {}".format(
-                                n.start_task_info.failure_info.message,
-                                stdout_stream,
-                                stderr_stream,
-                            )
-                        )
-                        return
 
     def cancel_jobs(self, active_jobs: List[SubmittedJobInfo]):
         # Cancel all active jobs.
