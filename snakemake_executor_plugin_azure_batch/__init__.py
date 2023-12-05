@@ -418,7 +418,7 @@ class Executor(RemoteExecutor):
                     self.report_job_error(job, stderr=stderr, stdout=stdout)
 
         self.logger.debug(
-            f"task {task.external_jobid}: "
+            f"task {task.id}: "
             f"creation_time={task.creation_time} "
             f"state={task.state} node_info={task.node_info}\n"
         )
