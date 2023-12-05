@@ -388,18 +388,18 @@ class Executor(RemoteExecutor):
                 errors.append(err_dict)
             self.report_job_error(job, msg=f"Batch pool error: {e}")
 
-    def _report_task_status(self, task: SubmittedJobInfo):
+    def _report_task_status(self, job: SubmittedJobInfo):
         """report batch task error"""
         try:
             task: batchmodels.CloudTask = self.batch_client.task.get(
-                job_id=self.job_id, task_id=task.external_jobid
+                job_id=self.job_id, task_id=job.external_jobid
             )
         except Exception as e:
             self.report_job_error(task, msg=f"Unable to get Azure Batch Task: {e}")
 
         if task.state == batchmodels.TaskState.completed:
-            stderr = self._get_task_output(self.job_id, task.external_jobid, "stderr")
-            stdout = self._get_task_output(self.job_id, task.external_jobid, "stdout")
+            stderr = self._get_task_output(self.job_id, job.external_jobid, "stderr")
+            stdout = self._get_task_output(self.job_id, job.external_jobid, "stdout")
 
             ei: batchmodels.TaskExecutionInformation = task.execution_info
             if ei is not None:
@@ -408,14 +408,14 @@ class Executor(RemoteExecutor):
                         f"Azure Batch execution failure: "
                         f" {ei.failure_info.__dict__}"
                     )
-                    self.report_job_error(task, stderr=stderr, stdout=stdout)
+                    self.report_job_error(job, stderr=stderr, stdout=stdout)
                 elif ei.result == batchmodels.TaskExecutionResult.success:
                     self.report_job_success(task)
                 else:
                     self.logger.error(
                         f"Unknown Azure task execution result: {ei.__dict__}"
                     )
-                    self.report_job_error(task, stderr=stderr, stdout=stdout)
+                    self.report_job_error(job, stderr=stderr, stdout=stdout)
 
         self.logger.debug(
             f"task {task.external_jobid}: "
