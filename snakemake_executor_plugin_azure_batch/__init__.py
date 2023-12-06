@@ -301,6 +301,12 @@ class Executor(RemoteExecutor):
         self.create_batch_pool()
         self.create_batch_job()
 
+    def report_job_error(self, job_info: SubmittedJobInfo, msg=None, **kwargs):
+        """implement report job error with cleanup"""
+        # cleanup after ourselves
+        self.shutdown()
+        return super().report_job_error(job_info, msg, **kwargs)
+
     def shutdown(self):
         # perform additional steps on shutdown
         # if necessary (jobs were cancelled already)
@@ -369,12 +375,6 @@ class Executor(RemoteExecutor):
             self.batch_client.task.add(self.job_id, task)
         except Exception as e:
             self.report_job_error(job_info, msg=f"Unable to add batch task: {e}")
-
-        try:
-            t = self.batch_client.task.get(self.job_id, task_id)
-            self.logger.info(f"Added AzBatch task {task_id}: {t.__dict__}")
-        except Exception as e:
-            self.report_job_error(job_info, msg=f"Unable to fetch batch task info: {e}")
 
         self.report_job_submission(job_info)
 
