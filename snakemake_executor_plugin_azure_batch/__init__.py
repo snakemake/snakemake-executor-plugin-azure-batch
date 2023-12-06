@@ -276,7 +276,7 @@ class Executor(RemoteExecutor):
                 self.settings.batch_account_name,
                 self.settings.account_key,
             )
-        # else authenticate with managed indentity client id
+        # else authenticate with managed identity client id
         elif self.settings.managed_identity_client_id is not None:
             self.logger.debug("Using managed identity batch authentication...")
             creds = DefaultAzureCredential(
@@ -335,7 +335,7 @@ class Executor(RemoteExecutor):
 
         # A string that uniquely identifies the Task within the Job.
         task_uuid = str(uuid.uuid1())
-        task_id = f"{job.rules[0]}-{task_uuid}"
+        task_id = f"{job.name}-{task_uuid}"
 
         # This is the admin user who runs the command inside the container.
         user = batchmodels.AutoUserSpecification(
