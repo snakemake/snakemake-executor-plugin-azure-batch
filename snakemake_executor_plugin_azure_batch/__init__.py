@@ -3,40 +3,37 @@ __copyright__ = "Copyright 2023, Snakemake community"
 __email__ = "johannes.koester@uni-due.de"
 __license__ = "MIT"
 
-from dataclasses import dataclass, field
-import os
 import datetime
 import io
-import re
+import os
 import shlex
-import sys
 import uuid
+from dataclasses import dataclass, field
 from pprint import pformat
-from urllib.parse import urlparse
 from typing import AsyncGenerator, List, Optional
+from urllib.parse import urlparse
 
-from snakemake_interface_executor_plugins.executors.base import SubmittedJobInfo
-from snakemake_interface_executor_plugins.executors.remote import RemoteExecutor
-from snakemake_interface_executor_plugins.settings import (
-    ExecutorSettingsBase,
-    CommonSettings,
-)
-from snakemake_interface_executor_plugins.jobs import (
-    JobExecutorInterface,
-)
-from snakemake_interface_common.exceptions import WorkflowError
-
-from azure.core.pipeline import PipelineContext, PipelineRequest
-from azure.core.pipeline.transport import HttpRequest
-from azure.core.pipeline.policies import BearerTokenCredentialPolicy
-from azure.identity import DefaultAzureCredential
-from azure.batch import BatchServiceClient
-from azure.batch.batch_auth import SharedKeyCredentials
-from azure.mgmt.batch import BatchManagementClient
 import azure.batch._batch_service_client as bsc
 import azure.batch.models as batchmodels
 import azure.mgmt.batch.models as mgmtbatchmodels
-import msrest.authentication as msa
+from azure.batch import BatchServiceClient
+from azure.batch.batch_auth import SharedKeyCredentials
+from azure.identity import DefaultAzureCredential
+from azure.mgmt.batch import BatchManagementClient
+from snakemake_interface_common.exceptions import WorkflowError
+from snakemake_interface_executor_plugins.executors.base import SubmittedJobInfo
+from snakemake_interface_executor_plugins.executors.remote import RemoteExecutor
+from snakemake_interface_executor_plugins.jobs import JobExecutorInterface
+from snakemake_interface_executor_plugins.settings import (
+    CommonSettings,
+    ExecutorSettingsBase,
+)
+
+from snakemake_executor_plugin_azure_batch.constant import (
+    AZURE_BATCH_RESOURCE_ENDPOINT,
+    DEFAULT_AUTO_SCALE_FORMULA,
+)
+from snakemake_executor_plugin_azure_batch.util import AzureIdentityCredentialAdapter
 
 
 # Optional:
@@ -55,6 +52,7 @@ class ExecutorSettings(ExecutorSettingsBase):
     )
     account_key: Optional[str] = field(
         default=None,
+        repr=False,
         metadata={
             "help": "Azure batch account key.",
             "required": True,
@@ -90,6 +88,7 @@ class ExecutorSettings(ExecutorSettingsBase):
     )
     managed_identity_client_id: Optional[str] = field(
         default=None,
+        repr=False,
         metadata={
             "help": "Azure managed identity client id.",
             "required": False,
@@ -201,6 +200,22 @@ class ExecutorSettings(ExecutorSettingsBase):
         },
     )
 
+    def __post_init__(self):
+        # parse batch account name
+        try:
+            parsed = urlparse(self.account_url)
+            self.batch_account_name = parsed.netloc.split(".")[0]
+
+        except Exception as e:
+            raise WorkflowError(
+                f"Unable to parse batch account url ({self.account_url}): {e}"
+            )
+
+        # parse subscription and resource id
+        if self.managed_identity_resource_id is not None:
+            self.subscription_id = self.managed_identity_resource_id.split("/")[2]
+            self.resource_group = self.managed_identity_resource_id.split("/")[4]
+
 
 # Required:
 # Specify common settings shared by various executors.
@@ -223,18 +238,13 @@ common_settings = CommonSettings(
 )
 
 
-# Required:
-# Implementation of your executor
+# Azure Batch Executor
 class Executor(RemoteExecutor):
     def __post_init__(self):
-        AZURE_BATCH_RESOURCE_ENDPOINT = "https://batch.core.windows.net/"
-
-        # setup batch configuration sets self.az_batch_config
-        self.batch_config = AzBatchConfig(
-            self.workflow.executor_settings.account_url,
-            self.workflow.executor_settings.account_key,
-        )
-        self.logger.debug(f"AzBatchConfig: {self.mask_batch_config_as_string()}")
+        # the snakemake/snakemake:latest container image
+        self.container_image = self.workflow.remote_execution_settings.container_image
+        self.settings: ExecutorSettings = self.workflow.executor_settings
+        self.logger.debug(f"ExecutorSettings: {pformat(self.settings, indent=2)}")
 
         # handle case on OSX with /var/ symlinked to /private/var/ causing
         # issues with workdir not matching other workflow file dirs
@@ -247,49 +257,55 @@ class Executor(RemoteExecutor):
 
         # Pool ids can only contain any combination of alphanumeric characters along
         # with dash and underscore.
-        ts = datetime.datetime.now().strftime("%Y-%m%dT%H-%M-%S")
+        ts = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
         self.pool_id = f"snakepool-{ts:s}"
         self.job_id = f"snakejob-{ts:s}"
 
         self.envvars = list(self.workflow.envvars) or []
 
         # enable autoscale flag
-        self.az_batch_enable_autoscale = self.workflow.executor_settings.autoscale
+        self.az_batch_enable_autoscale = self.settings.autoscale
 
         # authenticate batch client from SharedKeyCredentials
         if (
-            self.batch_config.batch_account_key is not None
-            and self.batch_config.managed_identity_client_id is None
+            self.settings.account_key is not None
+            and self.settings.managed_identity_client_id is None
         ):
             self.logger.debug("Using batch account key for authentication...")
             creds = SharedKeyCredentials(
-                self.batch_config.batch_account_name,
-                self.batch_config.batch_account_key,
+                self.settings.batch_account_name,
+                self.settings.account_key,
             )
-        # else authenticate with managed indentity client id
-        elif self.batch_config.managed_identity_client_id is not None:
+        # else authenticate with managed identity client id
+        elif self.settings.managed_identity_client_id is not None:
             self.logger.debug("Using managed identity batch authentication...")
             creds = DefaultAzureCredential(
-                managed_identity_client_id=self.batch_config.managed_identity_client_id
+                managed_identity_client_id=self.settings.managed_identity_client_id
             )
             creds = AzureIdentityCredentialAdapter(
                 credential=creds, resource_id=AZURE_BATCH_RESOURCE_ENDPOINT
             )
 
         self.batch_client = BatchServiceClient(
-            creds, batch_url=self.batch_config.batch_account_url
+            creds, batch_url=self.settings.account_url
         )
 
-        if self.batch_config.managed_identity_resource_id is not None:
+        if self.settings.managed_identity_resource_id is not None:
             self.batch_mgmt_client = BatchManagementClient(
                 credential=DefaultAzureCredential(
-                    managed_identity_client_id=self.batch_config.managed_identity_client_id  # noqa
+                    managed_identity_client_id=self.settings.managed_identity_client_id  # noqa
                 ),
-                subscription_id=self.batch_config.subscription_id,
+                subscription_id=self.settings.subscription_id,
             )
 
         self.create_batch_pool()
         self.create_batch_job()
+
+    def report_job_error(self, job_info: SubmittedJobInfo, msg=None, **kwargs):
+        """implement report job error with cleanup"""
+        # cleanup after ourselves
+        self.shutdown()
+        return super().report_job_error(job_info, msg, **kwargs)
 
     def shutdown(self):
         # perform additional steps on shutdown
@@ -311,8 +327,6 @@ class Executor(RemoteExecutor):
         # self.report_job_submission(job_info).
         # with job_info being of type
         # snakemake_interface_executor_plugins.executors.base.SubmittedJobInfo.
-        import azure.batch._batch_service_client as batch
-
         envsettings = []
         for key in self.envvars:
             try:
@@ -327,7 +341,7 @@ class Executor(RemoteExecutor):
 
         # A string that uniquely identifies the Task within the Job.
         task_uuid = str(uuid.uuid1())
-        task_id = f"{job.rule.name}-{task_uuid}"
+        task_id = f"{job.name}-{task_uuid}"
 
         # This is the admin user who runs the command inside the container.
         user = batchmodels.AutoUserSpecification(
@@ -337,7 +351,8 @@ class Executor(RemoteExecutor):
 
         # This is the docker image we want to run
         task_container_settings = batchmodels.TaskContainerSettings(
-            image_name=self.container_image, container_run_options="--rm"
+            image_name=self.container_image,
+            container_run_options="--rm",
         )
 
         # https://docs.microsoft.com/en-us/python/api/azure-batch/azure.batch.models.taskaddparameter?view=azure-python # noqa
@@ -345,7 +360,7 @@ class Executor(RemoteExecutor):
         # Azure Batch directories on the node)
         # are mapped into the container, all Task environment variables are mapped into
         # the container, and the Task command line is executed in the container
-        task = batch.models.TaskAddParameter(
+        task = batchmodels.TaskAddParameter(
             id=task_id,
             command_line=exec_job,
             container_settings=task_container_settings,
@@ -353,15 +368,113 @@ class Executor(RemoteExecutor):
             environment_settings=envsettings,
         )
 
-        # register job as active, using your own namedtuple.
-        self.batch_client.task.add(self.job_id, task)
-
         job_info = SubmittedJobInfo(job, external_jobid=task_id)
-        self.logger.info(f"Added AzBatch task {task_id}")
-        self.logger.debug(
-            f"Task details: {pformat(self.mask_sas_urls(task.__dict__), indent=2)}"
-        )
+
+        # register job as active, using your own namedtuple.
+        try:
+            self.batch_client.task.add(self.job_id, task)
+        except Exception as e:
+            self.report_job_error(job_info, msg=f"Unable to add batch task: {e}")
+
         self.report_job_submission(job_info)
+
+    def _report_pool_errors(self, job: SubmittedJobInfo):
+        """report batch pool errors"""
+        errors = []
+        pool = self.batch_client.pool.get(self.pool_id)
+        if pool.resize_errors:
+            for e in pool.resize_errors:
+                err_dict = {"code": e.code, "message": e.message}
+                errors.append(err_dict)
+            self.report_job_error(job, msg=f"Batch pool error: {e}")
+
+    def _report_task_status(self, job: SubmittedJobInfo):
+        """report batch task status. Return True if still running, False if not"""
+        self.logger.debug(
+            f"checking status of job {job.external_jobid}, {job.job}, {job}"
+        )
+        try:
+            task: batchmodels.CloudTask = self.batch_client.task.get(
+                job_id=self.job_id, task_id=job.external_jobid
+            )
+        except Exception as e:
+            self.logger.warning(f"Unable to get Azure Batch Task status: {e}")
+            # go on and query again next time
+            return True
+
+        self.logger.debug(
+            f"task {task.id}: "
+            f"creation_time={task.creation_time} "
+            f"state={task.state} node_info={task.node_info}\n"
+        )
+
+        if task.state == batchmodels.TaskState.completed:
+            stderr = self._get_task_output(self.job_id, job.external_jobid, "stderr")
+            stdout = self._get_task_output(self.job_id, job.external_jobid, "stdout")
+
+            ei: batchmodels.TaskExecutionInformation = task.execution_info
+            if ei is not None:
+                if ei.result == batchmodels.TaskExecutionResult.failure:
+                    msg = f"Azure Batch execution failure: {ei.failure_info.__dict__}"
+                    self.report_job_error(job, msg=msg, stderr=stderr, stdout=stdout)
+                elif ei.result == batchmodels.TaskExecutionResult.success:
+                    self.report_job_success(job)
+                else:
+                    msg = f"Unknown Azure task execution result: {ei.__dict__}"
+                    self.report_job_error(
+                        job,
+                        msg=msg,
+                        stderr=stderr,
+                        stdout=stdout,
+                    )
+            return False
+        else:
+            return True
+
+    def _report_node_errors(self, batch_job):
+        """report node errors
+
+        Fails if start task fails on a node, or node state becomes unusable (this can
+        happen if the container configuration is incorrect).
+
+        Streams stderr and stdout to on error.
+        """
+
+        node_list = self.batch_client.compute_node.list(self.pool_id)
+        for n in node_list:
+            if n.state == "unusable":
+                errors = []
+                if n.errors is not None:
+                    for e in n.errors:
+                        errors.append(e)
+                self.logger.error(f"An azure batch node became unusable: {errors}")
+
+            if n.start_task_info is not None and (
+                n.start_task_info.result == batchmodels.TaskExecutionResult.failure
+            ):
+                try:
+                    stderr_file = self.batch_client.file.get_from_compute_node(
+                        self.pool_id, n.id, "/startup/stderr.txt"
+                    )
+                    stderr_stream = self._read_stream_as_string(stderr_file, "utf-8")
+                except Exception:
+                    stderr_stream = ""
+
+                try:
+                    stdout_file = self.batch_client.file.get_from_compute_node(
+                        self.pool_id, n.id, "/startup/stdout.txt"
+                    )
+                    stdout_stream = self._read_stream_as_string(stdout_file, "utf-8")
+                except Exception:
+                    stdout_stream = ""
+
+                msg = (
+                    "Azure start task execution failed: "
+                    f"{n.start_task_info.failure_info.message}.\n"
+                    f"stderr:\n{stderr_stream}\n"
+                    f"stdout:\n{stdout_stream}"
+                )
+                self.logger.error(msg)
 
     async def check_active_jobs(
         self, active_jobs: List[SubmittedJobInfo]
@@ -381,90 +494,22 @@ class Executor(RemoteExecutor):
         # async with self.status_rate_limiter:
         #    # query remote middleware here
         self.logger.debug(f"Monitoring {len(active_jobs)} active AzBatch tasks")
+
         for batch_job in active_jobs:
             async with self.status_rate_limiter:
-                task = self.batch_client.task.get(self.job_id, batch_job.task_id)
+                # fail on pool resize errors
+                self._report_pool_errors(batch_job)
 
-            if task.state == batchmodels.TaskState.completed:
-                stderr = self._get_task_output(self.job_id, batch_job.task_id, "stderr")
-                stdout = self._get_task_output(self.job_id, batch_job.task_id, "stdout")
+            async with self.status_rate_limiter:
+                # report any node errors
+                self._report_node_errors(batch_job)
 
-                if (
-                    task.execution_info.result
-                    == batchmodels.TaskExecutionResult.failure
-                ):
-                    self.report_job_error(batch_job, stderr=stderr, stdout=stdout)
-                elif (
-                    task.execution_info.result
-                    == batchmodels.TaskExecutionResult.success
-                ):
-                    self.report_job_success(batch_job)
-                else:
-                    self.logger.error(
-                        "Unknown Azure task execution result: {}".format(
-                            task.execution_info.result
-                        )
-                    )
-                    self.report_job_error(batch_job, stderr=stderr, stdout=stdout)
+                # report the task failure or success
+                still_running = self._report_task_status(batch_job)
 
-            # The operation is still running
-            else:
-                self.logger.debug(
-                    f"task {batch_job.task_id}: creation_time={task.creation_time} "
-                    f"state={task.state} node_info={task.node_info}\n"
-                )
-                # report as still running
-                yield batch_job
-
-                # fail if start task fails on a node or node state becomes unusable
-                # and stream stderr stdout to stream
-                node_list = self.batch_client.compute_node.list(self.pool_id)
-                for n in node_list:
-                    # error on unusable node (this occurs if your container image fails
-                    # to pull)
-                    if n.state == "unusable":
-                        if n.errors is not None:
-                            for e in n.errors:
-                                self.logger.error(
-                                    f"Azure task error: {e.message}, "
-                                    f"{e.error_details[0].__dict__}"
-                                )
-                        self.logger.error("A node entered an unusable state, quitting.")
-                        return
-
-                    if n.start_task_info is not None and (
-                        n.start_task_info.result
-                        == batchmodels.TaskExecutionResult.failure
-                    ):
-                        try:
-                            stderr_file = self.batch_client.file.get_from_compute_node(
-                                self.pool_id, n.id, "/startup/stderr.txt"
-                            )
-                            stderr_stream = self._read_stream_as_string(
-                                stderr_file, "utf-8"
-                            )
-                        except Exception:
-                            stderr_stream = ""
-
-                        try:
-                            stdout_file = self.batch_client.file.get_from_compute_node(
-                                self.pool_id, n.id, "/startup/stdout.txt"
-                            )
-                            stdout_stream = self._read_stream_as_string(
-                                stdout_file, "utf-8"
-                            )
-                        except Exception:
-                            stdout_stream = ""
-
-                        self.logger.error(
-                            "Azure start task execution failed on node: {}.\n"
-                            "START_TASK_STDERR:{}\nSTART_TASK_STDOUT: {}".format(
-                                n.start_task_info.failure_info.message,
-                                stdout_stream,
-                                stderr_stream,
-                            )
-                        )
-                        return
+                if still_running:
+                    # report as still running
+                    yield batch_job
 
     def cancel_jobs(self, active_jobs: List[SubmittedJobInfo]):
         # Cancel all active jobs.
@@ -479,18 +524,18 @@ class Executor(RemoteExecutor):
         """Creates a pool of compute nodes"""
 
         image_ref = bsc.models.ImageReference(
-            publisher=self.batch_config.batch_pool_image_publisher,
-            offer=self.batch_config.batch_pool_image_offer,
-            sku=self.batch_config.batch_pool_image_sku,
+            publisher=self.settings.pool_image_publisher,
+            offer=self.settings.pool_image_offer,
+            sku=self.settings.pool_image_sku,
             version="latest",
         )
 
         # optional subnet network configuration
         # requires AAD batch auth insead of batch key auth
         network_config = None
-        if self.batch_config.batch_pool_subnet_id is not None:
+        if self.settings.pool_subnet_id is not None:
             network_config = batchmodels.NetworkConfiguration(
-                subnet_id=self.batch_config.batch_pool_subnet_id
+                subnet_id=self.settings.pool_subnet_id
             )
 
         # configure a container registry
@@ -498,7 +543,8 @@ class Executor(RemoteExecutor):
         # Specify container configuration, fetching an image
         #  https://docs.microsoft.com/en-us/azure/batch/batch-docker-container-workloads#prefetch-images-for-container-configuration
         container_config = batchmodels.ContainerConfiguration(
-            type="dockerCompatible", container_image_names=[self.container_image]
+            type="dockerCompatible",
+            container_image_names=[self.container_image],
         )
 
         user = None
@@ -506,16 +552,16 @@ class Executor(RemoteExecutor):
         identity_ref = None
         registry_conf = None
 
-        if self.batch_config.container_registry_url is not None:
+        if self.settings.container_registry_url is not None:
             if (
-                self.batch_config.container_registry_user is not None
-                and self.batch_config.container_registry_pass is not None
+                self.settings.container_registry_user is not None
+                and self.settings.container_registry_pass is not None
             ):
-                user = self.batch_config.container_registry_user
-                passw = self.batch_config.container_registry_pass
-            elif self.batch_config.managed_identity_resource_id is not None:
+                user = self.settings.container_registry_user
+                passw = self.settings.container_registry_pass
+            elif self.settings.managed_identity_resource_id is not None:
                 identity_ref = batchmodels.ComputeNodeIdentityReference(
-                    resource_id=self.batch_config.managed_identity_resource_id
+                    resource_id=self.settings.managed_identity_resource_id
                 )
             else:
                 raise WorkflowError(
@@ -527,7 +573,7 @@ class Executor(RemoteExecutor):
 
             registry_conf = [
                 batchmodels.ContainerRegistry(
-                    registry_server=self.batch_config.container_registry_url,
+                    registry_server=self.settings.container_registry_url,
                     identity_reference=identity_ref,
                     user_name=str(user),
                     password=str(passw),
@@ -546,7 +592,7 @@ class Executor(RemoteExecutor):
         start_task = None
 
         # if configured us start task bash script from sas url
-        if self.batch_config.batch_node_start_task_sasurl is not None:
+        if self.settings.node_start_task_sasurl is not None:
             _SIMPLE_TASK_NAME = "start_task.sh"
             start_task_admin = batchmodels.UserIdentity(
                 auto_user=batchmodels.AutoUserSpecification(
@@ -559,7 +605,7 @@ class Executor(RemoteExecutor):
                 resource_files=[
                     batchmodels.ResourceFile(
                         file_path=_SIMPLE_TASK_NAME,
-                        http_url=self.batch_config.batch_node_start_task_sasurl,
+                        http_url=self.settings.node_start_task_sasurl,
                     )
                 ],
                 user_identity=start_task_admin,
@@ -567,10 +613,10 @@ class Executor(RemoteExecutor):
 
         # autoscale requires the initial dedicated node count to be zero
         if self.az_batch_enable_autoscale:
-            self.batch_config.batch_pool_node_count = 0
+            self.settings.pool_node_count = 0
 
         node_communication_strategy = None
-        if self.batch_config.batch_node_communication_mode is not None:
+        if self.settings.node_communication_mode is not None:
             node_communication_strategy = batchmodels.NodeCommunicationMode.simplified
 
         new_pool = batchmodels.PoolAddParameter(
@@ -578,17 +624,17 @@ class Executor(RemoteExecutor):
             virtual_machine_configuration=batchmodels.VirtualMachineConfiguration(
                 image_reference=image_ref,
                 container_configuration=container_config,
-                node_agent_sku_id=self.batch_config.batch_pool_vm_node_agent_sku_id,
+                node_agent_sku_id=self.settings.pool_vm_node_agent_sku_id,
             ),
             network_configuration=network_config,
-            vm_size=self.batch_config.batch_pool_vm_size,
-            target_dedicated_nodes=self.batch_config.batch_pool_node_count,
+            vm_size=self.settings.pool_vm_size,
+            target_dedicated_nodes=self.settings.pool_node_count,
             target_node_communication_mode=node_communication_strategy,
             target_low_priority_nodes=0,
             start_task=start_task,
-            task_slots_per_node=self.batch_config.batch_tasks_per_node,
+            task_slots_per_node=self.settings.tasks_per_node,
             task_scheduling_policy=batchmodels.TaskSchedulingPolicy(
-                node_fill_type=self.batch_config.batch_node_fill_type
+                node_fill_type=self.settings.node_fill_type
             ),
         )
 
@@ -598,19 +644,10 @@ class Executor(RemoteExecutor):
             self.batch_client.pool.add(new_pool)
 
             if self.az_batch_enable_autoscale:
-                # define the autoscale formula
-                formula = (
-                    "$samples = $PendingTasks.GetSamplePercent(TimeInterval_Minute * 5);"  # noqa
-                    "$tasks = $samples < 70 ? max(0,$PendingTasks.GetSample(1)) : max( $PendingTasks.GetSample(1), avg($PendingTasks.GetSample(TimeInterval_Minute * 5)));"  # noqa
-                    "$targetVMs = $tasks > 0? $tasks:max(0, $TargetDedicatedNodes/2);"
-                    "$TargetDedicatedNodes = max(0, min($targetVMs, 10));"
-                    "$NodeDeallocationOption = taskcompletion;"
-                )
-
                 # Enable autoscale; specify the formula
                 self.batch_client.pool.enable_auto_scale(
                     self.pool_id,
-                    auto_scale_formula=formula,
+                    auto_scale_formula=DEFAULT_AUTO_SCALE_FORMULA,
                     # the minimum allowed autoscale interval is 5 minutes
                     auto_scale_evaluation_interval=datetime.timedelta(minutes=5),
                     pool_enable_auto_scale_options=None,
@@ -620,17 +657,17 @@ class Executor(RemoteExecutor):
 
             # update pool with managed identity, enables batch nodes to act as managed
             # identity
-            if self.batch_config.managed_identity_resource_id is not None:
+            if self.settings.managed_identity_resource_id is not None:
                 mid = mgmtbatchmodels.BatchPoolIdentity(
                     type=mgmtbatchmodels.PoolIdentityType.user_assigned,
                     user_assigned_identities={
-                        self.batch_config.managed_identity_resource_id: mgmtbatchmodels.UserAssignedIdentities()  # noqa
+                        self.settings.managed_identity_resource_id: mgmtbatchmodels.UserAssignedIdentities()  # noqa
                     },
                 )
                 params = mgmtbatchmodels.Pool(identity=mid)
                 self.batch_mgmt_client.pool.update(
-                    resource_group_name=self.batch_config.resource_group,
-                    account_name=self.batch_config.batch_account_name,
+                    resource_group_name=self.settings.resource_group,
+                    account_name=self.settings.batch_account_name,
                     pool_name=self.pool_id,
                     parameters=params,
                 )
@@ -648,47 +685,16 @@ class Executor(RemoteExecutor):
 
         self.logger.info(f"Creating batch job {self.job_id}")
 
-        self.batch_client.job.add(
-            bsc.models.JobAddParameter(
-                id=self.job_id,
-                constraints=bsc.models.JobConstraints(max_task_retry_count=0),
-                pool_info=bsc.models.PoolInformation(pool_id=self.pool_id),
+        try:
+            self.batch_client.job.add(
+                bsc.models.JobAddParameter(
+                    id=self.job_id,
+                    constraints=bsc.models.JobConstraints(max_task_retry_count=0),
+                    pool_info=bsc.models.PoolInformation(pool_id=self.pool_id),
+                )
             )
-        )
-
-    # mask_dict_vals masks sensitive keys from a dictionary of values for
-    # logging used to mask dicts with sensitive information from logging
-    @staticmethod
-    def mask_dict_vals(mdict: dict, keys: list):
-        ret_dict = mdict.copy()
-        for k in keys:
-            if k in ret_dict.keys() and ret_dict[k] is not None:
-                ret_dict[k] = 10 * "*"
-        return ret_dict
-
-    # mask blob url is used to mask url values that may contain SAS
-    # token information from being printed to the logs
-    def mask_sas_urls(self, attrs: dict):
-        attrs_new = attrs.copy()
-        sas_pattern = r"\?[^=]+=([^?'\"]+)"
-        mask = 10 * "*"
-
-        for k, value in attrs.items():
-            if value is not None and re.search(sas_pattern, str(value)):
-                attrs_new[k] = re.sub(sas_pattern, mask, value)
-
-        return attrs_new
-
-    def mask_batch_config_as_string(self) -> str:
-        masked_keys = self.mask_dict_vals(
-            self.batch_config.__dict__,
-            [
-                "batch_account_key",
-                "managed_identity_client_id",
-            ],
-        )
-        masked_urls = self.mask_sas_urls(masked_keys)
-        return pformat(masked_urls, indent=2)
+        except batchmodels.BatchErrorException as e:
+            raise f"Error adding batch job {e}"
 
     # from https://github.com/Azure-Samples/batch-python-quickstart/blob/master/src/python_quickstart_client.py # noqa
     @staticmethod
@@ -721,145 +727,3 @@ class Executor(RemoteExecutor):
             content = ""
 
         return content
-
-
-class AzBatchConfig:
-    def __init__(self, executor_settings: ExecutorSettings):
-        # configure defaults
-        self.batch_account_url = executor_settings.account_url
-
-        # parse batch account name
-        result = urlparse(self.batch_account_url)
-        self.batch_account_name = str.split(result.hostname, ".")[0]
-
-        self.batch_account_key = executor_settings.account_key
-
-        # optional subnet config
-        self.batch_pool_subnet_id = executor_settings.pool_subnet_id
-
-        # managed identity resource id configuration
-        self.managed_identity_resource_id = (
-            executor_settings.managed_identity_resource_id
-        )
-
-        # parse subscription and resource id
-        if self.managed_identity_resource_id is not None:
-            self.subscription_id = self.managed_identity_resource_id.split("/")[2]
-            self.resource_group = self.managed_identity_resource_id.split("/")[4]
-
-        self.managed_identity_client_id = executor_settings.managed_identity_client_id
-
-        if self.batch_pool_subnet_id is not None:
-            if (
-                self.managed_identity_client_id is None
-                or self.managed_identity_resource_id is None
-            ):
-                sys.exit(
-                    "Error: managed_identity_resource_id, "
-                    "managed_identity_client_id must be set when deploying batch "
-                    "nodes into a private subnet!"
-                )
-
-            # parse account details necessary for batch client authentication steps
-            if self.batch_pool_subnet_id.split("/")[2] != self.subscription_id:
-                raise WorkflowError(
-                    "Error: managed identity must be in the same subscription as the "
-                    "batch pool subnet."
-                )
-
-            if self.batch_pool_subnet_id.split("/")[4] != self.resource_group:
-                raise WorkflowError(
-                    "Error: managed identity must be in the same resource group "
-                    "as the batch pool subnet."
-                )
-
-        # sas url to a batch node start task bash script
-        self.batch_node_start_task_sasurl = executor_settings.node_start_task_sasurl
-
-        # options configured with env vars or default
-        self.batch_pool_image_publisher = executor_settings.pool_image_publisher
-        self.batch_pool_image_offer = executor_settings.pool_image_offer
-        self.batch_pool_image_sku = executor_settings.pool_image_sku
-        self.batch_pool_vm_node_agent_sku_id = (
-            executor_settings.pool_vm_node_agent_sku_id
-        )
-        self.batch_pool_vm_size = executor_settings.pool_vm_size
-
-        # dedicated pool node count
-        self.batch_pool_node_count = executor_settings.batch_pool_node_count
-
-        # default tasks per node
-        # see https://learn.microsoft.com/en-us/azure/batch/batch-parallel-node-tasks
-        self.batch_tasks_per_node = executor_settings.tasks_per_node
-
-        # possible values "spread" or "pack"
-        # see https://learn.microsoft.com/en-us/azure/batch/batch-parallel-node-tasks
-        self.batch_node_fill_type = executor_settings.node_fill_type
-
-        # enables simplified batch node communication if set
-        # see: https://learn.microsoft.com/en-us/azure/batch
-        # /simplified-compute-node-communication
-        self.batch_node_communication_mode = executor_settings.node_communication_mode
-
-        self.container_registry_url = executor_settings.container_registry_url
-
-        self.container_registry_user = executor_settings.container_registry_user
-
-        self.container_registry_pass = executor_settings.container_registry_pass
-
-    @staticmethod
-    def set_or_default(evar: str, default: Optional[str]):
-        gotvar = os.getenv(evar)
-        if gotvar is not None:
-            return gotvar
-        else:
-            return default
-
-
-# The usage of this credential helper is required to authenitcate batch with managed
-# identity credentials
-# because not all Azure SDKs support the azure.identity credentials yet, and batch is
-# one of them.
-# ref1: https://gist.github.com/lmazuel/cc683d82ea1d7b40208de7c9fc8de59d
-# ref2: https://gist.github.com/lmazuel/cc683d82ea1d7b40208de7c9fc8de59d
-class AzureIdentityCredentialAdapter(msa.BasicTokenAuthentication):
-    def __init__(
-        self,
-        credential=None,
-        resource_id="https://management.azure.com/.default",
-        **kwargs,
-    ):
-        """Adapt any azure-identity credential to work with SDK that needs
-        azure.common.credentials or msrestazure.
-
-        Default resource is ARM (syntax of endpoint v2)
-        :param credential: Any azure-identity credential (DefaultAzureCredential by
-                           default)
-        :param str resource_id: The scope to use to get the token (default ARM)
-        """
-        super(AzureIdentityCredentialAdapter, self).__init__(None)
-        if credential is None:
-            credential = DefaultAzureCredential()
-        self._policy = BearerTokenCredentialPolicy(credential, resource_id, **kwargs)
-
-    def _make_request(self):
-        return PipelineRequest(
-            HttpRequest("AzureIdentityCredentialAdapter", "https://fakeurl"),
-            PipelineContext(None),
-        )
-
-    def set_token(self):
-        """Ask the azure-core BearerTokenCredentialPolicy policy to get a token.
-        Using the policy gives us for free the caching system of azure-core.
-        We could make this code simpler by using private method, but by definition
-        I can't assure they will be there forever, so mocking a fake call to the policy
-        to extract the token, using 100% public API."""
-        request = self._make_request()
-        self._policy.on_request(request)
-        # Read Authorization, and get the second part after Bearer
-        token = request.http_request.headers["Authorization"].split(" ", 1)[1]
-        self.token = {"access_token": token}
-
-    def signed_session(self, session=None):
-        self.set_token()
-        return super(AzureIdentityCredentialAdapter, self).signed_session(session)

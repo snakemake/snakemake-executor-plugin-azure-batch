@@ -1,5 +1,6 @@
 import os
 from typing import Optional
+
 import snakemake.common.tests
 from snakemake_interface_executor_plugins.settings import ExecutorSettingsBase
 
@@ -11,10 +12,10 @@ class TestWorkflowsBase(snakemake.common.tests.TestWorkflowsMinioPlayStorageBase
         return "azure-batch"
 
     def get_executor_settings(self) -> Optional[ExecutorSettingsBase]:
-        # instatiate ExecutorSettings of this plugin as appropriate
+        # instantiate ExecutorSettings of this plugin as appropriate
         return ExecutorSettings(
-            account_url=os.getenv("AZ_BATCH_ACCOUNT_URL"),
-            account_key=os.getenv("AZ_BATCH_KEY"),
+            account_url=os.getenv("SNAKEMAKE_AZURE_BATCH_ACCOUNT_URL"),
+            account_key=os.getenv("SNAKEMAKE_AZURE_BATCH_ACCOUNT_KEY"),
         )
 
     def get_assume_shared_fs(self) -> bool:
@@ -24,7 +25,7 @@ class TestWorkflowsBase(snakemake.common.tests.TestWorkflowsMinioPlayStorageBase
         self,
     ) -> snakemake.settings.RemoteExecutionSettings:
         return snakemake.settings.RemoteExecutionSettings(
-            seconds_between_status_checks=1,
+            seconds_between_status_checks=5,
             envvars=self.get_envvars(),
             # TODO remove once we have switched to stable snakemake for dev
             container_image="snakemake/snakemake:latest",
