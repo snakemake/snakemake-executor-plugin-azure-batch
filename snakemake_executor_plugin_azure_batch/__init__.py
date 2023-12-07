@@ -507,7 +507,7 @@ class Executor(RemoteExecutor):
                 # report the task failure or success
                 still_running = self._report_task_status(batch_job)
 
-                if not still_running:
+                if still_running:
                     # report as still running
                     yield batch_job
 
