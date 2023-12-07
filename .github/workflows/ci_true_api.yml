@@ -7,7 +7,7 @@ env:
   PYTHON_VERSION: "3.11"
 
 jobs:
-  testing-mocked-api:
+  testing-true-api:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v3
