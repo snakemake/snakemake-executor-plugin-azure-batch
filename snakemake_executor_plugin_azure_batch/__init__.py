@@ -337,7 +337,7 @@ class Executor(RemoteExecutor):
                 continue
 
         exec_job = self.format_job_exec(job)
-        exec_job = f"/bin/bash -c '{shlex.quote(exec_job)}'"
+        exec_job = f"/bin/bash -c {shlex.quote(exec_job)}"
 
         # A string that uniquely identifies the Task within the Job.
         task_uuid = str(uuid.uuid1())
