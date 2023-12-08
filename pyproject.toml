@@ -2,7 +2,10 @@
 name = "snakemake-executor-plugin-azure-batch"
 version = "0.1.0"
 description = "A Snakemake executor plugin for submitting jobs to Microsoft Azure Batch."
-authors = ["Johannes Koester <johannes.koester@uni-due.de>"]
+authors = [
+  "Jake van Campen <jake.vancampen7@gmail.com>"
+  "Johannes Koester <johannes.koester@uni-due.de>"
+]
 readme = "README.md"
 license = "MIT"
 repository = "https://github.com/snakemake/snakemake-executor-plugin-azure-batch"
