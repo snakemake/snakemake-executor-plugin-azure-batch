@@ -694,7 +694,7 @@ class Executor(RemoteExecutor):
                 )
             )
         except batchmodels.BatchErrorException as e:
-            raise f"Error adding batch job {e}"
+            raise WorkflowError("Error adding batch job", e)
 
     # from https://github.com/Azure-Samples/batch-python-quickstart/blob/master/src/python_quickstart_client.py # noqa
     @staticmethod
