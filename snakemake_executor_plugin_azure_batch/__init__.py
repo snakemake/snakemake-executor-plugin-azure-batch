@@ -261,7 +261,7 @@ class Executor(RemoteExecutor):
         self.pool_id = f"snakepool-{ts:s}"
         self.job_id = f"snakejob-{ts:s}"
 
-        self.envvars = list(self.workflow.envvars) or []
+        self.envvars = self.workflow.spawned_job_args_factory.envvars()
 
         # enable autoscale flag
         self.az_batch_enable_autoscale = self.settings.autoscale
@@ -328,10 +328,10 @@ class Executor(RemoteExecutor):
         # with job_info being of type
         # snakemake_interface_executor_plugins.executors.base.SubmittedJobInfo.
         envsettings = []
-        for key in self.envvars:
+        for key, value in self.envvars.items():
             try:
                 envsettings.append(
-                    batchmodels.EnvironmentSetting(name=key, value=os.environ[key])
+                    batchmodels.EnvironmentSetting(name=key, value=value)
                 )
             except KeyError:
                 continue
