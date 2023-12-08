@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.1](https://github.com/snakemake/snakemake-executor-plugin-azure-batch/compare/v0.1.0...v0.1.1) (2023-12-08)
+
+
+### Miscellaneous Chores
+
+* release 0.1.1 ([b71eb45](https://github.com/snakemake/snakemake-executor-plugin-azure-batch/commit/b71eb456238f36661a2e959295647c20f54e584e))
+
 ## 0.1.0 (2023-12-08)
 
 
