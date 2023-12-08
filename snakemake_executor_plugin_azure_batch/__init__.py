@@ -340,7 +340,7 @@ class Executor(RemoteExecutor):
         exec_job = f"/bin/bash -c {shlex.quote(exec_job)}"
 
         # A string that uniquely identifies the Task within the Job.
-        task_uuid = str(uuid.uuid1())
+        task_uuid = str(uuid.uuid4())
         task_id = f"{job.name}-{task_uuid}"
 
         # This is the admin user who runs the command inside the container.
