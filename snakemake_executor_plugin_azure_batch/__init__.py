@@ -28,6 +28,7 @@ from azure.mgmt.batch.models import (
     ComputeNodeIdentityReference,
     ContainerConfiguration,
     ContainerRegistry,
+    ContainerType,
     DeploymentConfiguration,
     ElevationLevel,
     FixedScaleSettings,
@@ -286,44 +287,63 @@ class Executor(RemoteExecutor):
         self.job_id = f"snakejob-{ts:s}"
 
         self.envvars = self.workflow.spawned_job_args_factory.envvars()
-
-        # enable autoscale flag
-        self.az_batch_enable_autoscale = self.settings.autoscale
-
-        # authenticate batch client from SharedKeyCredentials
-        if (
-            self.settings.account_key is not None
-            and self.settings.managed_identity_client_id is None
-        ):
-            self.logger.debug("Using batch account key for authentication...")
-            creds = SharedKeyCredentials(
-                self.settings.batch_account_name,
-                self.settings.account_key,
-            )
-        # else authenticate with managed identity client id
-        elif self.settings.managed_identity_client_id is not None:
-            self.logger.debug("Using managed identity batch authentication...")
-            creds = DefaultAzureCredential(
-                managed_identity_client_id=self.settings.managed_identity_client_id
-            )
-            creds = AzureIdentityCredentialAdapter(
-                credential=creds, resource_id=AZURE_BATCH_RESOURCE_ENDPOINT
-            )
-
-        self.batch_client = BatchServiceClient(
-            creds, batch_url=self.settings.account_url
-        )
-
-        if self.settings.managed_identity_resource_id is not None:
-            self.batch_mgmt_client = BatchManagementClient(
-                credential=DefaultAzureCredential(
-                    managed_identity_client_id=self.settings.managed_identity_client_id  # noqa
-                ),
-                subscription_id=self.settings.subscription_id,
-            )
-
+        self.init_batch_client()
         self.create_batch_pool()
         self.create_batch_job()
+
+    def init_batch_client(self):
+        """
+        Initialize the batch service client from the given credentials
+
+        Sets:
+            self.batch_client
+            self.batch_mgmt_client
+        """
+        try:
+            # alias these variables here to save space
+            batch_url = self.settings.account_url
+            mrid = self.settings.managed_identity_resource_id
+            mcid = self.settings.managed_identity_client_id
+
+            self.batch_account_name = batch_url.split(".")[0].split("/")[2]
+
+            if self.settings.account_key is not None and mrid is None:
+                self.logger.info("Using batch account key for authentication...")
+
+                # parse the account name from the account url
+                self.batch_account_name = batch_url.split(".")[0].split("/")[2]
+
+                # use shared key credentials
+                creds = SharedKeyCredentials(
+                    account_name=self.batch_account_name,
+                    key=self.settings.account_key,
+                )
+
+            # else authenticate with managed identity client id
+            elif mrid is not None and mcid is not None:
+                self.logger.debug("Using managed identity batch authentication...")
+                creds = DefaultAzureCredential(managed_identity_client_id=mcid)
+                creds = AzureIdentityCredentialAdapter(
+                    credential=creds, resource_id=AZURE_BATCH_RESOURCE_ENDPOINT
+                )
+
+            # initialize batch client with creds
+            self.batch_client = BatchServiceClient(creds, batch_url)
+
+            # initialize batch mgmt client
+            if mrid is not None and mcid is not None:
+                self.batch_mgmt_client = BatchManagementClient(
+                    credential=DefaultAzureCredential(managed_identity_client_id=mcid),
+                    subscription_id=self.settings.subscription_id,
+                )
+            else:
+                self.batch_mgmt_client = BatchManagementClient(
+                    credential=creds,
+                    subscription_id=self.settings.subscription_id,
+                )
+
+        except Exception as e:
+            raise WorkflowError("Failed to initialize batch client", e)
 
     def report_job_error(self, job_info: SubmittedJobInfo, msg=None, **kwargs):
         """implement report job error with cleanup"""
@@ -614,7 +634,7 @@ class Executor(RemoteExecutor):
             # Specify container configuration, fetching an image
             #  https://docs.microsoft.com/en-us/azure/batch/batch-docker-container-workloads#prefetch-images-for-container-configuration
             container_config = ContainerConfiguration(
-                type="dockerCompatible",
+                type=ContainerType.DOCKER_COMPATIBLE,
                 container_image_names=[self.container_image],
                 container_registries=registry_conf,
             )
@@ -643,8 +663,15 @@ class Executor(RemoteExecutor):
             )
 
         # auto scale requires the initial dedicated node count to be zero
-        if self.az_batch_enable_autoscale:
+        # min allowed interval of five minutes
+        if self.settings.autoscale:
             self.settings.pool_node_count = 0
+            scale_settings = ScaleSettings(
+                auto_scale=AutoScaleSettings(
+                    formula=DEFAULT_AUTO_SCALE_FORMULA,
+                    evaluation_interval=datetime.timedelta(minutes=5),
+                )
+            )
 
         # default target node count
         scale_settings = ScaleSettings(
@@ -652,16 +679,6 @@ class Executor(RemoteExecutor):
                 target_dedicated_nodes=self.settings.pool_node_count
             )
         )
-
-        # if enable autoscale set to minimum allowed autoscale evaluation
-        # interval of five minutes
-        if self.az_batch_enable_autoscale:
-            scale_settings = ScaleSettings(
-                auto_scale=AutoScaleSettings(
-                    formula=DEFAULT_AUTO_SCALE_FORMULA,
-                    evaluation_interval=datetime.timedelta(minutes=5),
-                )
-            )
 
         pool_params = Pool(
             identity=batch_pool_identity,
