@@ -1,6 +1,6 @@
 [tool.poetry]
 name = "snakemake-executor-plugin-azure-batch"
-version = "0.1.2"
+version = "0.1.3"
 description = "A Snakemake executor plugin for submitting jobs to Microsoft Azure Batch."
 authors = [
   "Jake van Campen <jake.vancampen7@gmail.com>",

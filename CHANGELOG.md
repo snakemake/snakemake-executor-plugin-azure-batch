@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.1.3](https://github.com/snakemake/snakemake-executor-plugin-azure-batch/compare/v0.1.2...v0.1.3) (2023-12-20)
+
+
+### Bug Fixes
+
+* relax dependency ([2d2765a](https://github.com/snakemake/snakemake-executor-plugin-azure-batch/commit/2d2765aee844d8dbf86f20869ca92cfaf5c82d16))
+
 ## [0.1.2](https://github.com/snakemake/snakemake-executor-plugin-azure-batch/compare/v0.1.1...v0.1.2) (2023-12-19)
 
 
