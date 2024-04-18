@@ -1,5 +1,13 @@
 # Changelog
 
+## [0.1.4](https://github.com/snakemake/snakemake-executor-plugin-azure-batch/compare/v0.1.3...v0.1.4) (2024-04-18)
+
+
+### Bug Fixes
+
+* update snakemake-storage-plugin-s3 requirement from 0.2.8 to 0.2.10 ([#17](https://github.com/snakemake/snakemake-executor-plugin-azure-batch/issues/17)) ([88625d6](https://github.com/snakemake/snakemake-executor-plugin-azure-batch/commit/88625d60238dc7cb42cd7c7c35704158ad71a932))
+* update to latest snakemake-interface-executor-plugins ([#18](https://github.com/snakemake/snakemake-executor-plugin-azure-batch/issues/18)) ([5b145a9](https://github.com/snakemake/snakemake-executor-plugin-azure-batch/commit/5b145a99404d8f230b275c98c05148b85b430797))
+
 ## [0.1.3](https://github.com/snakemake/snakemake-executor-plugin-azure-batch/compare/v0.1.2...v0.1.3) (2023-12-20)
 
 
