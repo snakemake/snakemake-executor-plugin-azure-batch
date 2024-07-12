@@ -13,7 +13,6 @@ from tests import TestWorkflowsBase
 class TestWorkflowsMocked(TestWorkflowsBase):
     __test__ = True
 
-    @patch("azure.identity.DefaultAzureCredential", return_value=MagicMock())
     @patch(
         "azure.batch.operations.TaskOperations.add",
         new=MagicMock(autospec=True),
