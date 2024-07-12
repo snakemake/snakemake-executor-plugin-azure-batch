@@ -5,7 +5,7 @@ from azure.core.pipeline.transport import HttpRequest
 from azure.identity import DefaultAzureCredential
 
 
-# The usage of this credential helper is required to authenitcate batch with managed
+# The usage of this credential helper is required to authenticate batch with managed
 # identity credentials
 # because not all Azure SDKs support the azure.identity credentials yet, and batch is
 # one of them.

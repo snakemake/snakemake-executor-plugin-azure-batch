@@ -4,7 +4,7 @@ from typing import Optional
 import snakemake.common.tests
 from snakemake_interface_executor_plugins.settings import ExecutorSettingsBase
 
-from snakemake_executor_plugin_azure_batch import ExecutorSettings
+from snakemake_executor_plugin_azure_batch.executor import ExecutorSettings
 
 
 class TestWorkflowsBase(snakemake.common.tests.TestWorkflowsMinioPlayStorageBase):
@@ -16,6 +16,8 @@ class TestWorkflowsBase(snakemake.common.tests.TestWorkflowsMinioPlayStorageBase
         return ExecutorSettings(
             account_url=os.getenv("SNAKEMAKE_AZURE_BATCH_ACCOUNT_URL"),
             account_key=os.getenv("SNAKEMAKE_AZURE_BATCH_ACCOUNT_KEY"),
+            subscription_id=os.getenv("SNAKEMAKE_AZURE_BATCH_SUBSCRIPTION_ID"),
+            resource_group_name=os.getenv("SNAKEMAKE_AZURE_BATCH_RESOURCE_GROUP_NAME"),
         )
 
     def get_assume_shared_fs(self) -> bool:
@@ -27,6 +29,5 @@ class TestWorkflowsBase(snakemake.common.tests.TestWorkflowsMinioPlayStorageBase
         return snakemake.settings.RemoteExecutionSettings(
             seconds_between_status_checks=5,
             envvars=self.get_envvars(),
-            # TODO remove once we have switched to stable snakemake for dev
             container_image="snakemake/snakemake:latest",
         )
