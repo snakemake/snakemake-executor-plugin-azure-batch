@@ -15,7 +15,6 @@ class TestWorkflowsBase(snakemake.common.tests.TestWorkflowsMinioPlayStorageBase
         # instantiate ExecutorSettings of this plugin as appropriate
         return ExecutorSettings(
             account_url=os.getenv("SNAKEMAKE_AZURE_BATCH_ACCOUNT_URL"),
-            account_key=os.getenv("SNAKEMAKE_AZURE_BATCH_ACCOUNT_KEY"),
             subscription_id=os.getenv("SNAKEMAKE_AZURE_BATCH_SUBSCRIPTION_ID"),
             resource_group_name=os.getenv("SNAKEMAKE_AZURE_BATCH_RESOURCE_GROUP_NAME"),
         )

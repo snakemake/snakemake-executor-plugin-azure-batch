@@ -11,7 +11,6 @@ from urllib.parse import urlparse
 import azure.batch._batch_service_client as bsc
 import azure.batch.models as bm
 from azure.batch import BatchServiceClient
-from azure.batch.batch_auth import SharedKeyCredentials
 from azure.core.exceptions import HttpResponseError
 from azure.identity import DefaultAzureCredential
 from azure.mgmt.batch import BatchManagementClient
@@ -59,15 +58,6 @@ from snakemake_executor_plugin_azure_batch.util import AzureIdentityCredentialAd
 # Omit this class if you don't need any.
 @dataclass
 class ExecutorSettings(ExecutorSettingsBase):
-    account_key: Optional[str] = field(
-        default=None,
-        repr=False,
-        metadata={
-            "help": "Azure batch account key.",
-            "required": True,
-            "env_var": True,
-        },
-    )
     account_url: Optional[str] = field(
         default=None,
         metadata={
@@ -279,29 +269,20 @@ class Executor(RemoteExecutor):
             # alias these variables here to save space
             batch_url = self.settings.account_url
 
-            # use key credentials if no managed identity
-            if self.settings.account_key is not None:
-                self.logger.info("Using batch account key for authentication...")
-
-                # use shared key credentials
-                creds = SharedKeyCredentials(
-                    account_name=self.settings.batch_account_name,
-                    key=self.settings.account_key,
-                )
-
             # else authenticate with managed identity client id
-            else:
-                creds = DefaultAzureCredential(exclude_managed_identity_credential=True)
-                creds = AzureIdentityCredentialAdapter(
-                    credential=creds, resource_id=AZURE_BATCH_RESOURCE_ENDPOINT
-                )
+            default_credential = DefaultAzureCredential(
+                exclude_managed_identity_credential=True
+            )
+            adapted_credential = AzureIdentityCredentialAdapter(
+                credential=default_credential, resource_id=AZURE_BATCH_RESOURCE_ENDPOINT
+            )
 
             # initialize batch client with creds
-            self.batch_client = BatchServiceClient(creds, batch_url)
+            self.batch_client = BatchServiceClient(adapted_credential, batch_url)
 
             # initialize BatchManagementClient
             self.batch_mgmt_client = BatchManagementClient(
-                credential=DefaultAzureCredential(),
+                credential=default_credential,
                 subscription_id=self.settings.subscription_id,
             )
 
