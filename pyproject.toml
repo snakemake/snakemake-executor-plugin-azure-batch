@@ -14,19 +14,19 @@ keywords = ["snakemake", "plugin", "executor", "azure-batch"]
 
 [tool.poetry.dependencies]
 python = "^3.11"
-snakemake-interface-common = "^1.15.0"
-snakemake-interface-executor-plugins = ">=9.0.0,<10.0.0"
-azure-storage-blob = "^12.17.0"
-azure-batch = "^14.0.0"
+snakemake-interface-common = "^1.17.2"
+snakemake-interface-executor-plugins = "^9.2.0"
+azure-storage-blob = "^12.20.0"
+azure-batch = "^14.2.0"
 azure-mgmt-batch = "^17.0.0"
-azure-identity = "^1.14.0"
+azure-identity = "^1.17.1"
 msrest = "^0.7.1"
 
 [tool.poetry.group.dev.dependencies]
-black = ">=23.9.1,<25.0.0"
-flake8 = ">=6.1,<8.0"
-coverage = "^7.3.1"
-pytest = ">=7.4.2,<9.0.0"
+black = "^24.4.2"
+flake8 = "^7.1.0"
+coverage = "^7.6.0"
+pytest = "^8.2.2"
 snakemake = {git = "https://github.com/snakemake/snakemake.git"}
 snakemake-storage-plugin-s3 = "0.2.11"
 
