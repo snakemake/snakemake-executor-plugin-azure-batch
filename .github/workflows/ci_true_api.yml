@@ -34,5 +34,7 @@ jobs:
         env:
           SNAKEMAKE_AZURE_BATCH_ACCOUNT_URL: "${{ secrets.SNAKEMAKE_AZURE_BATCH_ACCOUNT_URL }}"
           SNAKEMAKE_AZURE_BATCH_ACCOUNT_KEY: "${{ secrets.SNAKEMAKE_AZURE_BATCH_ACCOUNT_KEY }}"
+          SNAKEMAKE_AZURE_BATCH_SUBSCRIPTION_ID: "${{ secrets.SNAKEMAKE_AZURE_BATCH_SUBSCRIPTION_ID }}"
+          SNAKEMAKE_AZURE_BATCH_RESOURCE_GROUP_NAME: "${{ secrets.SNAKEMAKE_AZURE_BATCH_RESOURCE_GROUP_NAME }}"
         run: 
           poetry run pytest tests/tests_true_api.py -v
