@@ -9,6 +9,9 @@ on:
 env:
   PYTHON_VERSION: "3.11"
 
+permissions:
+  id-token: write
+
 jobs:
   formatting:
     runs-on: ubuntu-latest
