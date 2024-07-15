@@ -4,7 +4,7 @@ from typing import Optional
 import snakemake.common.tests
 from snakemake_interface_executor_plugins.settings import ExecutorSettingsBase
 
-from snakemake_executor_plugin_azure_batch.executor import ExecutorSettings
+from snakemake_executor_plugin_azure_batch import ExecutorSettings
 
 
 class TestWorkflowsBase(snakemake.common.tests.TestWorkflowsMinioPlayStorageBase):
