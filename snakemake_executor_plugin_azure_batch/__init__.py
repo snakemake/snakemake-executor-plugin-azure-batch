@@ -288,6 +288,19 @@ class Executor(RemoteExecutor):
         self.create_batch_pool()
         self.create_batch_job()
 
+    # override real.py until bugfix is released
+    def get_envvar_declarations(self):
+        if self.common_settings.pass_envvar_declarations_to_cmd:
+            defs = " ".join(
+                f"{var}={repr(value)}" for var, value in self.envvars.items()
+            )
+            if defs:
+                return f"export {defs} &&"
+            else:
+                return ""
+        else:
+            return ""
+
     def init_batch_client(self):
         """
         Initialize the batch service client from the given credentials
