@@ -1,0 +1,1 @@
+This is the Snakemake executor for [Azure Batch](https://learn.microsoft.com/en-us/azure/batch/). This plugin is used to distribute Snakemake tasks to a pool of Azure Batch compute node(s). 
