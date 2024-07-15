@@ -327,21 +327,23 @@ class Executor(RemoteExecutor):
             and self.settings.managed_identity_resource_id is not None
         )
 
-    def report_job_error(self, job_info: SubmittedJobInfo, msg=None, **kwargs):
-        """implement report job error with cleanup"""
-        # cleanup after ourselves
-        self.shutdown()
-        return super().report_job_error(job_info, msg, **kwargs)
-
     def shutdown(self):
         # perform additional steps on shutdown
         # if necessary (jobs were cancelled already)
 
-        self.logger.debug("Deleting AzBatch job")
-        self.batch_client.job.delete(self.job_id)
+        try:
+            self.logger.debug("Deleting AzBatch job")
+            self.batch_client.job.delete(self.job_id)
+        except bm.BatchErrorException as be:
+            if be.error.code == "JobNotFound":
+                pass
 
-        self.logger.debug("Deleting AzBatch pool")
-        self.batch_client.pool.delete(self.pool_id)
+        try:
+            self.logger.debug("Deleting AzBatch pool")
+            self.batch_client.pool.delete(self.pool_id)
+        except bm.BatchErrorException as be:
+            if be.error.code == "PoolBeingDeleted":
+                pass
 
         super().shutdown()
 
