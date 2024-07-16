@@ -29,11 +29,6 @@ The remaining options are described [above](https://snakemake.github.io/snakemak
 
 ## Write the Snakefile
 
-The snakefile below will do stuff
-
-```Snakefile
-```
-
 ## Run the jobs on Azure Batch nodes!
 
 Here I pass the required values via CLI flags as described above, but they can also be detected from their respective environment variables. The example shown below are dummy values:
@@ -55,5 +50,5 @@ snakemake -j1 --executor azure-batch \
     --azure-batch-subscription-id d2c845cd-4903-40da-b34c-a6fec7115e21 \
     --azure-batch-resource-group-name rg-batch-test
     --default-storage-provider azure
-    --default-storage-prefix 'az://'
+    --default-storage-prefix 'az://account/container/path/'
 ```
