@@ -1,4 +1,7 @@
+from typing import List
+
 import msrest.authentication as msa
+from azure.batch.models import ComputeNodeError, NameValuePair, TaskFailureInformation
 from azure.core.pipeline import PipelineContext, PipelineRequest
 from azure.core.pipeline.policies import BearerTokenCredentialPolicy
 from azure.core.pipeline.transport import HttpRequest
@@ -52,3 +55,39 @@ class AzureIdentityCredentialAdapter(msa.BasicTokenAuthentication):
     def signed_session(self, session=None):
         self.set_token()
         return super(AzureIdentityCredentialAdapter, self).signed_session(session)
+
+
+def _error_item(code: str, message: str) -> dict:
+    return {
+        "code": code,
+        "message": message,
+        "error_details": [],
+    }
+
+
+def unpack_task_failure_information(failure_info: TaskFailureInformation) -> dict:
+    """
+    Unpack task failure information into object
+    { 'code': '', 'message': '', 'error_details': [{ 'detail': 'description' }]}
+    """
+    error_item = _error_item(failure_info.code, failure_info.message)
+    for detail in failure_info.details:
+        if isinstance(detail, NameValuePair):
+            error_item["error_details"].append({detail.name: detail.value})
+    return error_item
+
+
+def unpack_compute_node_errors(node_errors: List[ComputeNodeError]) -> list:
+    """
+    Unpack a list of compute node errors as list of items
+    { 'code': '', 'message': '', 'error_details': [{ 'detail': 'description' }]}
+    """
+    errors = []
+    for node_error in node_errors:
+        error_item = _error_item(node_error.code, node_error.message)
+        if node_error.error_details:
+            for detail in node_error.error_details:
+                if isinstance(detail, NameValuePair):
+                    error_item["error_details"].append({detail.name: detail.value})
+        errors.append(error_item)
+    return errors
