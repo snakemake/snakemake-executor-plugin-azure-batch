@@ -27,9 +27,9 @@ The remaining options are described [above](https://snakemake.github.io/snakemak
 
 # Example 
 
-## Write the Snakefile
+# Write the Snakefile
 
-## Run the jobs on Azure Batch nodes!
+# Run the jobs on Azure Batch nodes!
 
 Here I pass the required values via CLI flags as described above, but they can also be detected from their respective environment variables. The example shown below are dummy values:
 
