@@ -435,9 +435,6 @@ class Executor(RemoteExecutor):
 
     def _report_task_status(self, job: SubmittedJobInfo):
         """report batch task status. Return True if still running, False if not"""
-        self.logger.debug(
-            f"checking status of job {job.external_jobid}, {job.job}, {job}"
-        )
         try:
             task: bm.CloudTask = self.batch_client.task.get(
                 job_id=self.job_id, task_id=job.external_jobid
