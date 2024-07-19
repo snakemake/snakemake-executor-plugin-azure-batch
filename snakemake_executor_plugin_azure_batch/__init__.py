@@ -94,7 +94,7 @@ class ExecutorSettings(ExecutorSettingsBase):
     account_url: Optional[str] = field(
         default=None,
         metadata={
-            "help": "Azure batch account url.",
+            "help": "Batch account url: https://<account>.<region>.batch.azure.com",
             "required": True,
             "env_var": True,
         },
@@ -137,7 +137,7 @@ class ExecutorSettings(ExecutorSettingsBase):
     keep_pool: bool = field(
         default=False,
         metadata={
-            "help": "Keep the Azure batch pool after the workflow completes.",
+            "help": "Keep the Azure Batch resources after the workflow finished.",
             "required": False,
             "env_var": False,
         },
@@ -145,7 +145,10 @@ class ExecutorSettings(ExecutorSettingsBase):
     managed_identity_resource_id: Optional[str] = field(
         default=None,
         metadata={
-            "help": "Azure managed identity resource id.",
+            "help": "Azure Managed Identity resource id. Managed identity is used for"
+            "authentication of the Azure Batch nodes to other Azure resources. Required"
+            "if using the Snakemake Azure Storage plugin or if you need access to"
+            " Azure Container registry from the nodes.",
             "required": False,
             "env_var": True,
         },
@@ -154,15 +157,17 @@ class ExecutorSettings(ExecutorSettingsBase):
         default=None,
         repr=False,
         metadata={
-            "help": "Azure managed identity client id.",
+            "help": "Azure Managed Identity client id.",
             "required": False,
             "env_var": True,
         },
     )
-    node_start_task_sas_url: Optional[str] = field(
+    node_start_task_url: Optional[str] = field(
         default=None,
         metadata={
-            "help": "Azure batch node start task bash script sas url.",
+            "help": "Azure Batch node start task bash script url."
+            "This can be any url that hosts your start task bash script. Azure blob SAS"
+            "urls work nicely here",
             "required": False,
             "env_var": False,
         },
@@ -178,7 +183,7 @@ class ExecutorSettings(ExecutorSettingsBase):
     node_communication_mode: Optional[str] = field(
         default=None,
         metadata={
-            "help": "Azure batch node communication mode.",
+            "help": "Azure Batch node communication mode.",
             "required": False,
             "env_var": False,
         },
@@ -186,7 +191,7 @@ class ExecutorSettings(ExecutorSettingsBase):
     pool_subnet_id: Optional[str] = field(
         default=None,
         metadata={
-            "help": "Azure batch pool subnet id.",
+            "help": "Azure Batch pool subnet id.",
             "required": False,
             "env_var": True,
         },
@@ -194,7 +199,7 @@ class ExecutorSettings(ExecutorSettingsBase):
     pool_image_publisher: str = field(
         default="microsoft-azure-batch",
         metadata={
-            "help": "Azure batch pool image publisher.",
+            "help": "Batch pool image publisher.",
             "required": False,
             "env_var": False,
         },
@@ -202,7 +207,7 @@ class ExecutorSettings(ExecutorSettingsBase):
     pool_image_offer: str = field(
         default="ubuntu-server-container",
         metadata={
-            "help": "Azure batch pool image offer.",
+            "help": "Batch pool image offer.",
             "required": False,
             "env_var": False,
         },
@@ -210,7 +215,7 @@ class ExecutorSettings(ExecutorSettingsBase):
     pool_image_sku: str = field(
         default="20-04-lts",
         metadata={
-            "help": "Azure batch pool image sku.",
+            "help": "Batch pool image sku.",
             "required": False,
             "env_var": False,
         },
@@ -259,7 +264,8 @@ class ExecutorSettings(ExecutorSettingsBase):
     tasks_per_node: int = field(
         default=1,
         metadata={
-            "help": "Azure batch tasks per node.",
+            "help": "Batch tasks per node. If node count is greater than 1, this option"
+            "helps optimize the number of tasks each node can handle simultaneously.",
             "required": False,
             "env_var": False,
         },
@@ -634,8 +640,9 @@ class Executor(RemoteExecutor):
         # default to no start task
         start_task_conf = None
 
-        # if configured use start task bash script from sas url
-        if self.settings.node_start_task_sas_url is not None:
+        # if configured use start task bash script from url
+        # can be SAS url or other accessible url hosting bash script
+        if self.settings.node_start_task_url is not None:
             _SIMPLE_TASK_NAME = "start_task.sh"
             start_task_admin = UserIdentity(
                 auto_user=AutoUserSpecification(
@@ -648,7 +655,7 @@ class Executor(RemoteExecutor):
                 resource_files=[
                     ResourceFile(
                         file_path=_SIMPLE_TASK_NAME,
-                        http_url=self.settings.node_start_task_sas_url,
+                        http_url=self.settings.node_start_task_url,
                     )
                 ],
                 user_identity=start_task_admin,
@@ -665,7 +672,6 @@ class Executor(RemoteExecutor):
                 )
             )
 
-        # default target node count
         scale_settings = ScaleSettings(
             fixed_scale=FixedScaleSettings(
                 target_dedicated_nodes=self.settings.pool_node_count
