@@ -353,7 +353,7 @@ class Executor(RemoteExecutor):
         self.logger.debug(f"Remote command: {remote_command}")
 
         task: bm.TaskAddParameter = build.batch_task(
-            job, self.envvars(), remote_command
+            job, self.container_image, self.envvars(), remote_command
         )
 
         job_info = SubmittedJobInfo(job, external_jobid=task.id)

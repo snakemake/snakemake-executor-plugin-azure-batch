@@ -32,12 +32,8 @@ from snakemake_interface_executor_plugins.jobs import JobExecutorInterface
 
 from snakemake_executor_plugin_azure_batch.constant import DEFAULT_AUTO_SCALE_FORMULA
 
-from . import ExecutorSettings
 
-
-def batch_pool_params(
-    pool_id: str, settings: ExecutorSettings, container_image: str
-) -> Pool:
+def batch_pool_params(pool_id: str, settings, container_image: str) -> Pool:
     """
     Constructs a Batch Pool object with the specified parameters.
 
