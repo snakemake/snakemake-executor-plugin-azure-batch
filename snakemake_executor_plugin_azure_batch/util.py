@@ -1,3 +1,4 @@
+import io
 from typing import List
 
 import msrest.authentication as msa
@@ -24,10 +25,10 @@ class AzureIdentityCredentialAdapter(msa.BasicTokenAuthentication):
         """Adapt any azure-identity credential to work with SDK that needs
         azure.common.credentials or msrestazure.
 
-        Default resource is ARM (syntax of endpoint v2)
-        :param credential: Any azure-identity credential (DefaultAzureCredential by
-                           default)
-        :param str resource_id: The scope to use to get the token (default ARM)
+        Args:
+            credential: Any azure-identity credential (DefaultAzureCredential by
+                   default)
+            resource_id (str): The scope to use to get the token (default ARM)
         """
         super(AzureIdentityCredentialAdapter, self).__init__(None)
         if credential is None:
@@ -42,10 +43,12 @@ class AzureIdentityCredentialAdapter(msa.BasicTokenAuthentication):
 
     def set_token(self):
         """Ask the azure-core BearerTokenCredentialPolicy policy to get a token.
-        Using the policy gives us for free the caching system of azure-core.
-        We could make this code simpler by using private method, but by definition
-        I can't assure they will be there forever, so mocking a fake call to the policy
-        to extract the token, using 100% public API."""
+
+        Using the policy gives us the benefit of the caching system provided by
+        azure-core. Although we could simplify this code by using private methods,
+        it's not guaranteed that they will be available in the future. Therefore,
+        we mock a fake call to the policy using 100% public API to extract the token.
+        """
         request = self._make_request()
         self._policy.on_request(request)
         # Read Authorization, and get the second part after Bearer
@@ -67,8 +70,22 @@ def _error_item(code: str, message: str) -> dict:
 
 def unpack_task_failure_information(failure_info: TaskFailureInformation) -> dict:
     """
-    Unpack task failure information into object
-    { 'code': '', 'message': '', 'error_details': [{ 'detail': 'description' }]}
+    Unpacks task failure information into an object.
+
+    Args:
+        failure_info (TaskFailureInformation): The task failure information.
+
+    Returns:
+        dict: The unpacked error item with the following structure:
+            {
+                'code': str,
+                'message': str,
+                'error_details': [
+                    {
+                        'detail': str
+                    }
+                ]
+            }
     """
     error_item = _error_item(failure_info.code, failure_info.message)
     for detail in failure_info.details:
@@ -79,8 +96,15 @@ def unpack_task_failure_information(failure_info: TaskFailureInformation) -> dic
 
 def unpack_compute_node_errors(node_errors: List[ComputeNodeError]) -> list:
     """
-    Unpack a list of compute node errors as list of items
-    { 'code': '', 'message': '', 'error_details': [{ 'detail': 'description' }]}
+    Unpack a list of compute node errors into a list of items.
+
+    Args:
+        node_errors (List[ComputeNodeError]): The list of compute node errors.
+
+    Returns:
+        List[dict]: The list of unpacked error items, each containing 'code',
+        'message', and 'error_details'.
+
     """
     errors = []
     for node_error in node_errors:
@@ -91,3 +115,25 @@ def unpack_compute_node_errors(node_errors: List[ComputeNodeError]) -> list:
                     error_item["error_details"].append({detail.name: detail.value})
         errors.append(error_item)
     return errors
+
+
+def read_stream_as_string(stream, encoding="utf-8"):
+    """Reads a stream as a string.
+
+    Args:
+        stream: The input stream generator.
+        encoding: The encoding of the file. Default is utf-8.
+
+    Returns:
+        The file content as a string.
+
+    Raises:
+        None.
+    """
+    output = io.BytesIO()
+    try:
+        for data in stream:
+            output.write(data)
+        return output.getvalue().decode(encoding)
+    finally:
+        output.close()

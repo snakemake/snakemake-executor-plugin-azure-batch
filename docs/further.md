@@ -1,6 +1,6 @@
 # Azure Batch Authentication
 
-The plugin uses [DefaultAzureCredential](https://learn.microsoft.com/en-us/python/api/azure-identity/azure.identity.defaultazurecredential?view=azure-python) to create and destroy Azure Batch resources. The caller must have Contributor permissions on the Azure Batch account for the plugin to work properly. 
+The plugin uses [DefaultAzureCredential](https://learn.microsoft.com/en-us/python/api/azure-identity/azure.identity.defaultazurecredential?view=azure-python) to create and destroy Azure Batch resources. The caller must have Contributor permissions on the Azure Batch account for the plugin to work properly. If you are using the Azure Storage plugin you should also have the Storage Blob Data Contributor role for the storage account(s) you use. 
 
 To run a Snakemake workflow using your azure identity you need to ensure you are logged in using the [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/):
 
@@ -8,9 +8,11 @@ To run a Snakemake workflow using your azure identity you need to ensure you are
 az login
 ```
 
-If you are running Snakemake from a GitHub workflow, you can authenticate the GitHub runner [using OIDC with a User-Assigned Managed Identity](https://docs.github.com/en/actions/deployment/security-hardening-your-deployments/configuring-openid-connect-in-azure), and grant that Managed Identity Contributor permissions to the Azure Batch Account. 
+If you are running Snakemake from a GitHub workflow, you can authenticate the GitHub runner [with a User-Assigned Managed Identity](https://docs.github.com/en/actions/deployment/security-hardening-your-deployments/configuring-openid-connect-in-azure), and grant that Managed Identity Contributor permissions to the Azure Batch Account. 
 
-If you are also using the [Snakemake storage plugin for azure](https://snakemake.github.io/snakemake-plugin-catalog/plugins/storage/azure.html), the caller will also need [Storage Blob Data Contributor Role](https://learn.microsoft.com/en-us/azure/role-based-access-control/built-in-roles/storage#storage-blob-data-contributor) for any storage account you want to read/write data.
+When using the [Snakemake storage plugin for azure](https://snakemake.github.io/snakemake-plugin-catalog/plugins/storage/azure.html), or if you have tasks that need access to the Azure Container Registry or other Azure resources, it is required to setup a user assigned managed identity with the executor. The Batch nodes will assume this identity at runtime, and you can grant them permissions to Azure resources using this identity. 
+
+The most common role to grant the Managed Identity will be [Storage Blob Data Contributor Role](https://learn.microsoft.com/en-us/azure/role-based-access-control/built-in-roles/storage#storage-blob-data-contributor) for any storage account you want to read/write data from the Azure Batch nodes. 
 
 # Setup
 

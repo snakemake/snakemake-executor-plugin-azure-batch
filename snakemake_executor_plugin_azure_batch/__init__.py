@@ -5,10 +5,7 @@ __license__ = "MIT"
 
 
 import datetime
-import io
-import os
 import shlex
-import uuid
 from dataclasses import dataclass, field
 from pprint import pformat
 from typing import AsyncGenerator, List, Optional
@@ -20,31 +17,6 @@ from azure.batch import BatchServiceClient
 from azure.core.exceptions import HttpResponseError
 from azure.identity import DefaultAzureCredential
 from azure.mgmt.batch import BatchManagementClient
-from azure.mgmt.batch.models import (
-    AutoScaleSettings,
-    AutoUserScope,
-    AutoUserSpecification,
-    BatchPoolIdentity,
-    ComputeNodeIdentityReference,
-    ContainerConfiguration,
-    ContainerRegistry,
-    ContainerType,
-    DeploymentConfiguration,
-    ElevationLevel,
-    FixedScaleSettings,
-    ImageReference,
-    NetworkConfiguration,
-    NodeCommunicationMode,
-    Pool,
-    PoolIdentityType,
-    ResourceFile,
-    ScaleSettings,
-    StartTask,
-    TaskSchedulingPolicy,
-    UserAssignedIdentities,
-    UserIdentity,
-    VirtualMachineConfiguration,
-)
 from snakemake_interface_common.exceptions import WorkflowError
 from snakemake_interface_executor_plugins.executors.base import SubmittedJobInfo
 from snakemake_interface_executor_plugins.executors.remote import RemoteExecutor
@@ -54,12 +26,11 @@ from snakemake_interface_executor_plugins.settings import (
     ExecutorSettingsBase,
 )
 
-from snakemake_executor_plugin_azure_batch.constant import (
-    AZURE_BATCH_RESOURCE_ENDPOINT,
-    DEFAULT_AUTO_SCALE_FORMULA,
-)
+from snakemake_executor_plugin_azure_batch import build
+from snakemake_executor_plugin_azure_batch.constant import AZURE_BATCH_RESOURCE_ENDPOINT
 from snakemake_executor_plugin_azure_batch.util import (
     AzureIdentityCredentialAdapter,
+    read_stream_as_string,
     unpack_compute_node_errors,
     unpack_task_failure_information,
 )
@@ -94,7 +65,7 @@ class ExecutorSettings(ExecutorSettingsBase):
     account_url: Optional[str] = field(
         default=None,
         metadata={
-            "help": "Azure batch account url.",
+            "help": "Batch account url: https://<account>.<region>.batch.azure.com",
             "required": True,
             "env_var": True,
         },
@@ -137,7 +108,7 @@ class ExecutorSettings(ExecutorSettingsBase):
     keep_pool: bool = field(
         default=False,
         metadata={
-            "help": "Keep the Azure batch pool after the workflow completes.",
+            "help": "Keep the Azure Batch resources after the workflow finished.",
             "required": False,
             "env_var": False,
         },
@@ -145,7 +116,10 @@ class ExecutorSettings(ExecutorSettingsBase):
     managed_identity_resource_id: Optional[str] = field(
         default=None,
         metadata={
-            "help": "Azure managed identity resource id.",
+            "help": "Azure Managed Identity resource id. Managed identity is used for"
+            "authentication of the Azure Batch nodes to other Azure resources. Required"
+            "if using the Snakemake Azure Storage plugin or if you need access to"
+            " Azure Container registry from the nodes.",
             "required": False,
             "env_var": True,
         },
@@ -154,15 +128,17 @@ class ExecutorSettings(ExecutorSettingsBase):
         default=None,
         repr=False,
         metadata={
-            "help": "Azure managed identity client id.",
+            "help": "Azure Managed Identity client id.",
             "required": False,
             "env_var": True,
         },
     )
-    node_start_task_sas_url: Optional[str] = field(
+    node_start_task_url: Optional[str] = field(
         default=None,
         metadata={
-            "help": "Azure batch node start task bash script sas url.",
+            "help": "Azure Batch node start task bash script url."
+            "This can be any url that hosts your start task bash script. Azure blob SAS"
+            "urls work nicely here",
             "required": False,
             "env_var": False,
         },
@@ -178,7 +154,7 @@ class ExecutorSettings(ExecutorSettingsBase):
     node_communication_mode: Optional[str] = field(
         default=None,
         metadata={
-            "help": "Azure batch node communication mode.",
+            "help": "Azure Batch node communication mode.",
             "required": False,
             "env_var": False,
         },
@@ -186,7 +162,7 @@ class ExecutorSettings(ExecutorSettingsBase):
     pool_subnet_id: Optional[str] = field(
         default=None,
         metadata={
-            "help": "Azure batch pool subnet id.",
+            "help": "Azure Batch pool subnet id.",
             "required": False,
             "env_var": True,
         },
@@ -194,7 +170,7 @@ class ExecutorSettings(ExecutorSettingsBase):
     pool_image_publisher: str = field(
         default="microsoft-azure-batch",
         metadata={
-            "help": "Azure batch pool image publisher.",
+            "help": "Batch pool image publisher.",
             "required": False,
             "env_var": False,
         },
@@ -202,7 +178,7 @@ class ExecutorSettings(ExecutorSettingsBase):
     pool_image_offer: str = field(
         default="ubuntu-server-container",
         metadata={
-            "help": "Azure batch pool image offer.",
+            "help": "Batch pool image offer.",
             "required": False,
             "env_var": False,
         },
@@ -210,7 +186,7 @@ class ExecutorSettings(ExecutorSettingsBase):
     pool_image_sku: str = field(
         default="20-04-lts",
         metadata={
-            "help": "Azure batch pool image sku.",
+            "help": "Batch pool image sku.",
             "required": False,
             "env_var": False,
         },
@@ -259,7 +235,8 @@ class ExecutorSettings(ExecutorSettingsBase):
     tasks_per_node: int = field(
         default=1,
         metadata={
-            "help": "Azure batch tasks per node.",
+            "help": "Batch tasks per node. If node count is greater than 1, this option"
+            "helps optimize the number of tasks each node can handle simultaneously.",
             "required": False,
             "env_var": False,
         },
@@ -273,68 +250,51 @@ class ExecutorSettings(ExecutorSettingsBase):
 
 class Executor(RemoteExecutor):
     def __post_init__(self):
-        # the snakemake/snakemake:latest container image
+        # the snakemake/snakemake:latest container image to run the workflow remote
         self.container_image = self.workflow.remote_execution_settings.container_image
         self.settings: ExecutorSettings = self.workflow.executor_settings
         self.logger.debug(
             f"ExecutorSettings: {pformat(self.workflow.executor_settings, indent=2)}"
         )
 
-        # handle case on OSX with /var/ symlinked to /private/var/ causing
-        # issues with workdir not matching other workflow file dirs
-        dirname = os.path.dirname(self.workflow.persistence.path)
-        osxprefix = "/private"
-        if osxprefix in dirname:
-            dirname = dirname.removeprefix(osxprefix)
-
-        self.workdir = dirname
-
-        # Pool ids can only contain any combination of alphanumeric characters along
-        # with dash and underscore.
+        # Pool ids can only contain alphanumeric characters, dashes and underscore.
         ts = datetime.datetime.now().strftime("%Y-%m-%dT%H-%M-%S")
         self.pool_id = f"snakepool-{ts:s}"
         self.job_id = f"snakejob-{ts:s}"
 
-        self.envvars = self.workflow.spawned_job_args_factory.envvars()
+        # requires managed identity resource id to be set for the azure storage plugin
+        if self.workflow.storage_settings.default_storage_provider == "azure":
+            if self.settings.managed_identity_resource_id is None:
+                raise WorkflowError(
+                    "Azure Storage plugin requires a managed identity "
+                    "resource and client ids to be set."
+                )
+
         self.init_batch_client()
         self.create_batch_pool()
         self.create_batch_job()
 
-    # override real.py until bugfix is released
-    def get_envvar_declarations(self):
-        if self.common_settings.pass_envvar_declarations_to_cmd:
-            defs = " ".join(
-                f"{var}={repr(value)}" for var, value in self.envvars.items()
-            )
-            if defs:
-                return f"export {defs} &&"
-            else:
-                return ""
-        else:
-            return ""
-
     def init_batch_client(self):
         """
-        Initialize the batch service client from the given credentials
+        Initialize the BatchServiceClient and BatchManagementClient using
+        DefaultAzureCredential.
 
         Sets:
-            self.batch_client
-            self.batch_mgmt_client
+            - self.batch_client
+            - self.batch_mgmt_client
         """
         try:
-            # alias these variables here to save space
-            batch_url = self.settings.account_url
 
-            # else authenticate with managed identity client id
+            # initialize BatchServiceClient
             default_credential = DefaultAzureCredential(
                 exclude_managed_identity_credential=True
             )
             adapted_credential = AzureIdentityCredentialAdapter(
                 credential=default_credential, resource_id=AZURE_BATCH_RESOURCE_ENDPOINT
             )
-
-            # initialize batch client with creds
-            self.batch_client = BatchServiceClient(adapted_credential, batch_url)
+            self.batch_client = BatchServiceClient(
+                adapted_credential, self.settings.account_url
+            )
 
             # initialize BatchManagementClient
             self.batch_mgmt_client = BatchManagementClient(
@@ -343,11 +303,18 @@ class Executor(RemoteExecutor):
             )
 
         except Exception as e:
-            raise WorkflowError("Failed to initialize batch client", e)
+            raise WorkflowError("Failed to initialize batch clients", e)
 
-    def shutdown(self):
-        # perform additional steps on shutdown
-        # if necessary (jobs were cancelled already)
+    def cleanup_resources(self):
+        """Cleanup Azure Batch resources.
+
+        This method is responsible for cleaning up Azure Batch resources, including
+        deleting the Batch job and pool. If the `keep_pool` setting is enabled, the
+        pool will not be deleted.
+
+        Raises:
+            WorkflowError: If there is an error deleting the Batch job or pool.
+        """
         if not self.settings.keep_pool:
             try:
                 self.logger.debug("Deleting AzBatch job")
@@ -363,6 +330,15 @@ class Executor(RemoteExecutor):
                 if be.error.code == "PoolBeingDeleted":
                     pass
 
+    def shutdown(self):
+        """Shutdown the executor, cleaning up resources if necessary.
+
+        This method is responsible for shutting down the executor and cleaning up any
+        resources that were created during the execution. If the `keep_pool` setting is
+        enabled, the pool will not be deleted. This method should be called before
+        exiting the program or when the executor is no longer needed.
+        """
+        self.cleanup_resources()
         super().shutdown()
 
     def run_job(self, job: JobExecutorInterface):
@@ -373,47 +349,14 @@ class Executor(RemoteExecutor):
         # self.report_job_submission(job_info).
         # with job_info being of type
         # snakemake_interface_executor_plugins.executors.base.SubmittedJobInfo.
-        envsettings = []
-        for key, value in self.envvars.items():
-            try:
-                envsettings.append(bm.EnvironmentSetting(name=key, value=value))
-            except KeyError:
-                continue
-
-        exec_job = self.format_job_exec(job)
-        remote_command = f"/bin/bash -c {shlex.quote(exec_job)}"
+        remote_command = f"/bin/bash -c {shlex.quote(self.format_job_exec(job))}"
         self.logger.debug(f"Remote command: {remote_command}")
 
-        # A string that uniquely identifies the Task within the Job.
-        task_uuid = str(uuid.uuid4())
-        task_id = f"{job.name}-{task_uuid}"
-
-        # This is the admin user who runs the command inside the container.
-        user = bm.AutoUserSpecification(
-            scope=bm.AutoUserScope.pool,
-            elevation_level=bm.ElevationLevel.admin,
+        task: bm.TaskAddParameter = build.batch_task(
+            job, self.container_image, self.envvars(), remote_command
         )
 
-        # This is the docker image we want to run
-        task_container_settings = bm.TaskContainerSettings(
-            image_name=self.container_image,
-            container_run_options="--rm",
-        )
-
-        # https://docs.microsoft.com/en-us/python/api/azure-batch/azure.batch.models.taskaddparameter?view=azure-python # noqa
-        # all directories recursively below the AZ_BATCH_NODE_ROOT_DIR (the root of
-        # Azure Batch directories on the node)
-        # are mapped into the container, all Task environment variables are mapped into
-        # the container, and the Task command line is executed in the container
-        task = bm.TaskAddParameter(
-            id=task_id,
-            command_line=remote_command,
-            container_settings=task_container_settings,
-            user_identity=bm.UserIdentity(auto_user=user),
-            environment_settings=envsettings,
-        )
-
-        job_info = SubmittedJobInfo(job, external_jobid=task_id)
+        job_info = SubmittedJobInfo(job, external_jobid=task.id)
 
         # register job as active, using your own namedtuple.
         try:
@@ -424,17 +367,25 @@ class Executor(RemoteExecutor):
         self.report_job_submission(job_info)
 
     def _report_pool_errors(self, job: SubmittedJobInfo):
-        """report batch pool errors"""
+        """Report batch pool errors.
+
+        This method is responsible for reporting any resize errors that are detected
+        from the Azure Batch pool.
+        """
         errors = []
         pool = self.batch_client.pool.get(self.pool_id)
         if pool.resize_errors:
             for e in pool.resize_errors:
                 err_dict = {"code": e.code, "message": e.message}
                 errors.append(err_dict)
-            self.report_job_error(job, msg=f"Batch pool error: {e}")
+            self.report_job_error(job, msg=f"Batch pool error: {e}. ")
 
     def _report_task_status(self, job: SubmittedJobInfo):
-        """report batch task status. Return True if still running, False if not"""
+        """Report batch task status.
+
+        Returns:
+            bool: True if the task is still running, False otherwise.
+        """
         try:
             task: bm.CloudTask = self.batch_client.task.get(
                 job_id=self.job_id, task_id=job.external_jobid
@@ -444,9 +395,11 @@ class Executor(RemoteExecutor):
             return True
 
         self.logger.debug(
-            f"task {task.id}: "
-            f"creation_time={task.creation_time} "
-            f"state={task.state} node_info={task.node_info}\n"
+            {
+                "task": task.id,
+                "state": str(task.state),
+                "creation_time": str(task.creation_time),
+            }
         )
 
         if task.state == bm.TaskState.completed:
@@ -463,14 +416,6 @@ class Executor(RemoteExecutor):
                     self.report_job_error(job, msg=msg, stderr=stderr, stdout=stdout)
                 elif ei.result == bm.TaskExecutionResult.success:
                     self.report_job_success(job)
-                else:
-                    msg = f"\nUnknown task execution result: {ei.__dict__}\n"
-                    self.report_job_error(
-                        job,
-                        msg=msg,
-                        stderr=stderr,
-                        stdout=stdout,
-                    )
             return False
         else:
             return True
@@ -498,7 +443,7 @@ class Executor(RemoteExecutor):
                     stderr_file = self.batch_client.file.get_from_compute_node(
                         self.pool_id, n.id, "/startup/stderr.txt"
                     )
-                    stderr_stream = self._read_stream_as_string(stderr_file, "utf-8")
+                    stderr_stream = read_stream_as_string(stderr_file, "utf-8")
                 except Exception:
                     stderr_stream = ""
 
@@ -506,7 +451,7 @@ class Executor(RemoteExecutor):
                     stdout_file = self.batch_client.file.get_from_compute_node(
                         self.pool_id, n.id, "/startup/stdout.txt"
                     )
-                    stdout_stream = self._read_stream_as_string(stdout_file, "utf-8")
+                    stdout_stream = read_stream_as_string(stdout_file, "utf-8")
                 except Exception:
                     stdout_stream = ""
 
@@ -557,143 +502,24 @@ class Executor(RemoteExecutor):
             self.batch_client.task.terminate(self.job_id, task.id)
 
     def create_batch_pool(self):
-        """Creates a pool of compute nodes"""
+        """Creates a pool of compute nodes.
 
-        image_ref = ImageReference(
-            publisher=self.settings.pool_image_publisher,
-            offer=self.settings.pool_image_offer,
-            sku=self.settings.pool_image_sku,
-            version="latest",
-        )
+        This method is responsible for creating a pool of compute nodes in Azure Batch.
 
-        network_config = None
-        if self.settings.pool_subnet_id is not None:
-            network_config = NetworkConfiguration(
-                subnet_id=self.settings.pool_subnet_id
-            )
+        Returns:
+            None
 
-        # configure batch pool identity
-        batch_pool_identity = None
-        if self.settings.managed_identity_resource_id is not None:
-            batch_pool_identity = BatchPoolIdentity(
-                type=PoolIdentityType.USER_ASSIGNED,
-                user_assigned_identities={
-                    self.settings.managed_identity_resource_id: UserAssignedIdentities()
-                },
-            )
+        Raises:
+            WorkflowError: If there is an error creating the pool.
+        """
 
-        # configure a container registry
-        # Specify container configuration, fetching an image
-        #  https://docs.microsoft.com/en-us/azure/batch/batch-docker-container-workloads#prefetch-images-for-container-configuration
-        container_config = ContainerConfiguration(
-            type="dockerCompatible",
-            container_image_names=[self.container_image],
-        )
-
-        user = None
-        passw = None
-        identity_ref = None
-        registry_conf = None
-
-        if self.settings.container_registry_url is not None:
-            if (
-                self.settings.container_registry_user is not None
-                and self.settings.container_registry_pass is not None
-            ):
-                user = self.settings.container_registry_user
-                passw = self.settings.container_registry_pass
-            elif self.settings.managed_identity_resource_id is not None:
-                identity_ref = ComputeNodeIdentityReference(
-                    resource_id=self.settings.managed_identity_resource_id
-                )
-            else:
-                raise WorkflowError(
-                    "No container registry authentication scheme set. Please set the "
-                    "BATCH_CONTAINER_REGISTRY_USER and BATCH_CONTAINER_REGISTRY_PASS "
-                    "or set MANAGED_IDENTITY_CLIENT_ID and "
-                    "MANAGED_IDENTITY_RESOURCE_ID."
-                )
-
-            registry_conf = [
-                ContainerRegistry(
-                    registry_server=self.settings.container_registry_url,
-                    identity_reference=identity_ref,
-                    user_name=str(user),
-                    password=str(passw),
-                )
-            ]
-
-            # Specify container configuration, fetching an image
-            #  https://docs.microsoft.com/en-us/azure/batch/batch-docker-container-workloads#prefetch-images-for-container-configuration
-            container_config = ContainerConfiguration(
-                type=ContainerType.DOCKER_COMPATIBLE,
-                container_image_names=[self.container_image],
-                container_registries=registry_conf,
-            )
-
-        # default to no start task
-        start_task_conf = None
-
-        # if configured use start task bash script from sas url
-        if self.settings.node_start_task_sas_url is not None:
-            _SIMPLE_TASK_NAME = "start_task.sh"
-            start_task_admin = UserIdentity(
-                auto_user=AutoUserSpecification(
-                    elevation_level=ElevationLevel.ADMIN,
-                    scope=AutoUserScope.POOL,
-                )
-            )
-            start_task_conf = StartTask(
-                command_line=f"bash {_SIMPLE_TASK_NAME}",
-                resource_files=[
-                    ResourceFile(
-                        file_path=_SIMPLE_TASK_NAME,
-                        http_url=self.settings.node_start_task_sas_url,
-                    )
-                ],
-                user_identity=start_task_admin,
-            )
-
-        # auto scale requires the initial dedicated node count to be zero
-        # min allowed interval of five minutes
-        if self.settings.autoscale:
-            self.settings.pool_node_count = 0
-            scale_settings = ScaleSettings(
-                auto_scale=AutoScaleSettings(
-                    formula=DEFAULT_AUTO_SCALE_FORMULA,
-                    evaluation_interval=datetime.timedelta(minutes=5),
-                )
-            )
-
-        # default target node count
-        scale_settings = ScaleSettings(
-            fixed_scale=FixedScaleSettings(
-                target_dedicated_nodes=self.settings.pool_node_count
-            )
-        )
-
-        pool_params = Pool(
-            identity=batch_pool_identity,
-            display_name=self.pool_id,
-            vm_size=self.settings.pool_vm_size,
-            deployment_configuration=DeploymentConfiguration(
-                virtual_machine_configuration=VirtualMachineConfiguration(
-                    image_reference=image_ref,
-                    container_configuration=container_config,
-                    node_agent_sku_id=self.settings.pool_vm_node_agent_sku_id,
-                ),
-            ),
-            scale_settings=scale_settings,
-            start_task=start_task_conf,
-            network_configuration=network_config,
-            task_slots_per_node=self.settings.tasks_per_node,
-            task_scheduling_policy=TaskSchedulingPolicy(
-                node_fill_type=self.settings.node_fill_type
-            ),
-            target_node_communication_mode=NodeCommunicationMode.CLASSIC,
+        pool_params = build.batch_pool_params(
+            pool_id=self.pool_id,
+            settings=self.settings,
+            container_image=self.container_image,
         )
         try:
-            self.logger.info(f"Creating pool: {self.pool_id}")
+            self.logger.info(f"Creating Batch Pool: {self.pool_id}")
             # we use the azure.mgmt.batch client to create the pool here because if you
             # configure a managed identity for the batch nodes, the azure.batch client
             # does not correctly apply it to the pool
@@ -713,9 +539,20 @@ class Executor(RemoteExecutor):
                 self.logger.info(f"Pool {self.pool_id} exists.")
 
     def create_batch_job(self):
-        """Creates a job with the specified ID, associated with the specified pool"""
+        """Creates a job with the specified ID, associated with the specified pool.
 
-        self.logger.info(f"Creating batch job {self.job_id}")
+        Args:
+            job_id (str): The ID of the job.
+            pool_id (str): The ID of the pool associated with the job.
+
+        Returns:
+            None
+
+        Raises:
+            WorkflowError: If there is an error creating the job.
+        """
+
+        self.logger.info(f"Creating Batch Job: {self.job_id}")
 
         try:
             self.batch_client.job.add(
@@ -728,33 +565,32 @@ class Executor(RemoteExecutor):
         except bm.BatchErrorException as e:
             raise WorkflowError("Error adding batch job", e)
 
-    # from https://github.com/Azure-Samples/batch-python-quickstart/blob/master/src/python_quickstart_client.py # noqa
-    @staticmethod
-    def _read_stream_as_string(stream, encoding):
-        """Read stream as string
-        :param stream: input stream generator
-        :param str encoding: The encoding of the file. The default is utf-8.
-        :return: The file content.
-        :rtype: str
-        """
-        output = io.BytesIO()
-        try:
-            for data in stream:
-                output.write(data)
-            if encoding is None:
-                encoding = "utf-8"
-            return output.getvalue().decode(encoding)
-        finally:
-            output.close()
-
     # adopted from
     # https://github.com/Azure-Samples/batch-python-quickstart/blob/master/src/python_quickstart_client.py # noqa
     def _get_task_output(self, job_id, task_id, stdout_or_stderr, encoding=None):
+        """
+        Retrieves the content of the specified task's stdout or stderr file.
+
+        Args:
+            job_id (str): The ID of the job that contains the task.
+            task_id (str): The ID of the task.
+            stdout_or_stderr (str): Specifies whether to retrieve the stdout or stderr
+                file content. Must be either "stdout" or "stderr".
+            encoding (str, optional): The encoding to use when reading the file content.
+            Defaults to None.
+
+        Returns:
+            str: The content of the specified stdout or stderr file, or an empty string
+            if the file does not exist.
+
+        Raises:
+            Exception: If an error occurs while retrieving the file content.
+        """
         assert stdout_or_stderr in ["stdout", "stderr"]
         fname = stdout_or_stderr + ".txt"
         try:
             stream = self.batch_client.file.get_from_task(job_id, task_id, fname)
-            content = self._read_stream_as_string(stream, encoding)
+            content = read_stream_as_string(stream, encoding)
         except Exception:
             content = ""
 
