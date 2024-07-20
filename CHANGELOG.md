@@ -1,5 +1,24 @@
 # Changelog
 
+## [0.2.0](https://github.com/snakemake/snakemake-executor-plugin-azure-batch/compare/v0.1.3...v0.2.0) (2024-07-20)
+
+
+### Features
+
+* keep pool option ([#22](https://github.com/snakemake/snakemake-executor-plugin-azure-batch/issues/22)) ([106b48a](https://github.com/snakemake/snakemake-executor-plugin-azure-batch/commit/106b48a806ea77315647babe8c16f755f17d1fe9))
+
+
+### Bug Fixes
+
+* create pool with mgmt batch client ([#10](https://github.com/snakemake/snakemake-executor-plugin-azure-batch/issues/10)) ([7bddf40](https://github.com/snakemake/snakemake-executor-plugin-azure-batch/commit/7bddf4005123a4b82b9ad17eb8e6d83208d0bc4c)), closes [#7](https://github.com/snakemake/snakemake-executor-plugin-azure-batch/issues/7)
+* update snakemake-storage-plugin-s3 requirement from 0.2.8 to 0.2.10 ([#17](https://github.com/snakemake/snakemake-executor-plugin-azure-batch/issues/17)) ([88625d6](https://github.com/snakemake/snakemake-executor-plugin-azure-batch/commit/88625d60238dc7cb42cd7c7c35704158ad71a932))
+* update to latest snakemake-interface-executor-plugins ([#18](https://github.com/snakemake/snakemake-executor-plugin-azure-batch/issues/18)) ([5b145a9](https://github.com/snakemake/snakemake-executor-plugin-azure-batch/commit/5b145a99404d8f230b275c98c05148b85b430797))
+
+
+### Documentation
+
+* update usage  ([#23](https://github.com/snakemake/snakemake-executor-plugin-azure-batch/issues/23)) ([613ec1a](https://github.com/snakemake/snakemake-executor-plugin-azure-batch/commit/613ec1ae1f67c18d2178e72582329a7722629ec7))
+
 ## [0.1.3](https://github.com/snakemake/snakemake-executor-plugin-azure-batch/compare/v0.1.2...v0.1.3) (2023-12-20)
 
 
