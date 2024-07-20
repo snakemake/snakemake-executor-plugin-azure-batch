@@ -6,7 +6,6 @@ __license__ = "MIT"
 
 import datetime
 import shlex
-import uuid
 from dataclasses import dataclass, field
 from pprint import pformat
 from typing import AsyncGenerator, List, Optional
@@ -18,31 +17,6 @@ from azure.batch import BatchServiceClient
 from azure.core.exceptions import HttpResponseError
 from azure.identity import DefaultAzureCredential
 from azure.mgmt.batch import BatchManagementClient
-from azure.mgmt.batch.models import (
-    AutoScaleSettings,
-    AutoUserScope,
-    AutoUserSpecification,
-    BatchPoolIdentity,
-    ComputeNodeIdentityReference,
-    ContainerConfiguration,
-    ContainerRegistry,
-    ContainerType,
-    DeploymentConfiguration,
-    ElevationLevel,
-    FixedScaleSettings,
-    ImageReference,
-    NetworkConfiguration,
-    NodeCommunicationMode,
-    Pool,
-    PoolIdentityType,
-    ResourceFile,
-    ScaleSettings,
-    StartTask,
-    TaskSchedulingPolicy,
-    UserAssignedIdentities,
-    UserIdentity,
-    VirtualMachineConfiguration,
-)
 from snakemake_interface_common.exceptions import WorkflowError
 from snakemake_interface_executor_plugins.executors.base import SubmittedJobInfo
 from snakemake_interface_executor_plugins.executors.remote import RemoteExecutor
@@ -52,10 +26,8 @@ from snakemake_interface_executor_plugins.settings import (
     ExecutorSettingsBase,
 )
 
-from snakemake_executor_plugin_azure_batch.constant import (
-    AZURE_BATCH_RESOURCE_ENDPOINT,
-    DEFAULT_AUTO_SCALE_FORMULA,
-)
+from snakemake_executor_plugin_azure_batch import build
+from snakemake_executor_plugin_azure_batch.constant import AZURE_BATCH_RESOURCE_ENDPOINT
 from snakemake_executor_plugin_azure_batch.util import (
     AzureIdentityCredentialAdapter,
     read_stream_as_string,
@@ -377,44 +349,14 @@ class Executor(RemoteExecutor):
         # self.report_job_submission(job_info).
         # with job_info being of type
         # snakemake_interface_executor_plugins.executors.base.SubmittedJobInfo.
-        env_settings = []
-        for key, value in self.envvars().items():
-            env_settings.append(bm.EnvironmentSetting(name=key, value=value))
-
-        exec_job = self.format_job_exec(job)
-        remote_command = f"/bin/bash -c {shlex.quote(exec_job)}"
+        remote_command = f"/bin/bash -c {shlex.quote(self.format_job_exec(job))}"
         self.logger.debug(f"Remote command: {remote_command}")
 
-        # A string that uniquely identifies the Task within the Job.
-        task_uuid = str(uuid.uuid4())
-        task_id = f"{job.name}-{task_uuid}"
-
-        # This is the admin user who runs the command inside the container.
-        user = bm.AutoUserSpecification(
-            scope=bm.AutoUserScope.pool,
-            elevation_level=bm.ElevationLevel.admin,
+        task: bm.TaskAddParameter = build.batch_task(
+            job, self.envvars(), remote_command
         )
 
-        # This is the docker image we want to run
-        task_container_settings = bm.TaskContainerSettings(
-            image_name=self.container_image,
-            container_run_options="--rm",
-        )
-
-        # https://docs.microsoft.com/en-us/python/api/azure-batch/azure.batch.models.taskaddparameter?view=azure-python # noqa
-        # all directories recursively below the AZ_BATCH_NODE_ROOT_DIR (the root of
-        # Azure Batch directories on the node)
-        # are mapped into the container, all Task environment variables are mapped into
-        # the container, and the Task command line is executed in the container
-        task = bm.TaskAddParameter(
-            id=task_id,
-            command_line=remote_command,
-            container_settings=task_container_settings,
-            user_identity=bm.UserIdentity(auto_user=user),
-            environment_settings=env_settings,
-        )
-
-        job_info = SubmittedJobInfo(job, external_jobid=task_id)
+        job_info = SubmittedJobInfo(job, external_jobid=task.id)
 
         # register job as active, using your own namedtuple.
         try:
@@ -571,140 +513,10 @@ class Executor(RemoteExecutor):
             WorkflowError: If there is an error creating the pool.
         """
 
-        image_ref = ImageReference(
-            publisher=self.settings.pool_image_publisher,
-            offer=self.settings.pool_image_offer,
-            sku=self.settings.pool_image_sku,
-            version="latest",
-        )
-
-        network_config = None
-        if self.settings.pool_subnet_id is not None:
-            network_config = NetworkConfiguration(
-                subnet_id=self.settings.pool_subnet_id
-            )
-
-        # configure batch pool identity
-        batch_pool_identity = None
-        if self.settings.managed_identity_resource_id is not None:
-            batch_pool_identity = BatchPoolIdentity(
-                type=PoolIdentityType.USER_ASSIGNED,
-                user_assigned_identities={
-                    self.settings.managed_identity_resource_id: UserAssignedIdentities()
-                },
-            )
-
-        # configure a container registry
-        # Specify container configuration, fetching an image
-        #  https://docs.microsoft.com/en-us/azure/batch/batch-docker-container-workloads#prefetch-images-for-container-configuration
-        container_config = ContainerConfiguration(
-            type="dockerCompatible",
-            container_image_names=[self.container_image],
-        )
-
-        user = None
-        passw = None
-        identity_ref = None
-        registry_conf = None
-
-        if self.settings.container_registry_url is not None:
-            if (
-                self.settings.container_registry_user is not None
-                and self.settings.container_registry_pass is not None
-            ):
-                user = self.settings.container_registry_user
-                passw = self.settings.container_registry_pass
-            elif self.settings.managed_identity_resource_id is not None:
-                identity_ref = ComputeNodeIdentityReference(
-                    resource_id=self.settings.managed_identity_resource_id
-                )
-            else:
-                raise WorkflowError(
-                    "No container registry authentication scheme set. Please set the "
-                    "SNAKEMAKE_AZURE_BATCH_CONTAINER_REGISTRY_USER and "
-                    "SNAKEMAKE_AZURE_BATCH_CONTAINER_REGISTRY_PASS "
-                    "or set SNAKEMAKE_AZURE_BATCH_MANAGED_IDENTITY_CLIENT_ID and "
-                    "SNAKEMAKE_AZURE_BATCH_MANAGED_IDENTITY_RESOURCE_ID "
-                    "and Grant it permissions to the Azure Container Registry."
-                )
-
-            registry_conf = [
-                ContainerRegistry(
-                    registry_server=self.settings.container_registry_url,
-                    identity_reference=identity_ref,
-                    user_name=str(user),
-                    password=str(passw),
-                )
-            ]
-
-            # Specify container configuration, fetching an image
-            #  https://docs.microsoft.com/en-us/azure/batch/batch-docker-container-workloads#prefetch-images-for-container-configuration
-            container_config = ContainerConfiguration(
-                type=ContainerType.DOCKER_COMPATIBLE,
-                container_image_names=[self.container_image],
-                container_registries=registry_conf,
-            )
-
-        # default to no start task
-        start_task_conf = None
-
-        # if configured use start task bash script from url
-        # can be SAS url or other accessible url hosting bash script
-        if self.settings.node_start_task_url is not None:
-            _SIMPLE_TASK_NAME = "start_task.sh"
-            start_task_admin = UserIdentity(
-                auto_user=AutoUserSpecification(
-                    elevation_level=ElevationLevel.ADMIN,
-                    scope=AutoUserScope.POOL,
-                )
-            )
-            start_task_conf = StartTask(
-                command_line=f"bash {_SIMPLE_TASK_NAME}",
-                resource_files=[
-                    ResourceFile(
-                        file_path=_SIMPLE_TASK_NAME,
-                        http_url=self.settings.node_start_task_url,
-                    )
-                ],
-                user_identity=start_task_admin,
-            )
-
-        # auto scale requires the initial dedicated node count to be zero
-        # min allowed interval of five minutes
-        if self.settings.autoscale:
-            self.settings.pool_node_count = 0
-            scale_settings = ScaleSettings(
-                auto_scale=AutoScaleSettings(
-                    formula=DEFAULT_AUTO_SCALE_FORMULA,
-                    evaluation_interval=datetime.timedelta(minutes=5),
-                )
-            )
-
-        scale_settings = ScaleSettings(
-            fixed_scale=FixedScaleSettings(
-                target_dedicated_nodes=self.settings.pool_node_count
-            )
-        )
-
-        pool_params = Pool(
-            identity=batch_pool_identity,
-            display_name=self.pool_id,
-            vm_size=self.settings.pool_vm_size,
-            deployment_configuration=DeploymentConfiguration(
-                virtual_machine_configuration=VirtualMachineConfiguration(
-                    image_reference=image_ref,
-                    container_configuration=container_config,
-                    node_agent_sku_id=self.settings.pool_vm_node_agent_sku_id,
-                ),
-            ),
-            scale_settings=scale_settings,
-            start_task=start_task_conf,
-            network_configuration=network_config,
-            task_slots_per_node=self.settings.tasks_per_node,
-            task_scheduling_policy=TaskSchedulingPolicy(
-                node_fill_type=self.settings.node_fill_type
-            ),
-            target_node_communication_mode=NodeCommunicationMode.CLASSIC,
+        pool_params = build.batch_pool_params(
+            pool_id=self.pool_id,
+            settings=self.settings,
+            container_image=self.container_image,
         )
         try:
             self.logger.info(f"Creating Batch Pool: {self.pool_id}")
