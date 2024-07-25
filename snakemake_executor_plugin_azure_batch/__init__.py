@@ -270,9 +270,11 @@ class Executor(RemoteExecutor):
                     "resource and client ids to be set."
                 )
 
-        self.init_batch_client()
-        self.create_batch_pool()
-        self.create_batch_job()
+        # only setup resources if there is something to do
+        if len(self.dag):
+            self.init_batch_client()
+            self.create_batch_pool()
+            self.create_batch_job()
 
     def init_batch_client(self):
         """
