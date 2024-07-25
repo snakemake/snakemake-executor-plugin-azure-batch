@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.2.1](https://github.com/snakemake/snakemake-executor-plugin-azure-batch/compare/v0.2.0...v0.2.1) (2024-07-25)
+
+
+### Bug Fixes
+
+* only create if jobs ([#27](https://github.com/snakemake/snakemake-executor-plugin-azure-batch/issues/27)) ([02c3e85](https://github.com/snakemake/snakemake-executor-plugin-azure-batch/commit/02c3e8589551c3df495b43bb09acd6dfbd9d8b7c)), closes [#25](https://github.com/snakemake/snakemake-executor-plugin-azure-batch/issues/25)
+
 ## [0.2.0](https://github.com/snakemake/snakemake-executor-plugin-azure-batch/compare/v0.1.3...v0.2.0) (2024-07-20)
 
 
