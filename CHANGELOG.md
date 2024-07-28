@@ -1,5 +1,12 @@
 # Changelog
 
+## [0.3.0](https://github.com/snakemake/snakemake-executor-plugin-azure-batch/compare/v0.2.1...v0.3.0) (2024-07-28)
+
+
+### Features
+
+* custom azure credential ([#29](https://github.com/snakemake/snakemake-executor-plugin-azure-batch/issues/29)) ([2ebda59](https://github.com/snakemake/snakemake-executor-plugin-azure-batch/commit/2ebda593655283a3f045bb8543af66df0ef34c71))
+
 ## [0.2.1](https://github.com/snakemake/snakemake-executor-plugin-azure-batch/compare/v0.2.0...v0.2.1) (2024-07-25)
 
 
