@@ -1,6 +1,6 @@
 # Azure Batch Authentication
 
-The plugin uses [DefaultAzureCredential](https://learn.microsoft.com/en-us/python/api/azure-identity/azure.identity.defaultazurecredential?view=azure-python) to create and destroy Azure Batch resources. The caller must have Contributor permissions on the Azure Batch account for the plugin to work properly. If you are using the Azure Storage plugin you should also have the Storage Blob Data Contributor role for the storage account(s) you use. 
+The plugin uses a CustomAzureCredential chain that prefers the use of AzureCliCredential, then falls back to a ManagedIdentityCredential, and finally, an EnvironmentCredential (service principal) to create and destroy Azure Batch resources. The caller must have Contributor permissions on the Azure Batch account for the plugin to work properly. If you are using the Azure Storage plugin you should also have the Storage Blob Data Contributor role for the storage account(s) you use. 
 
 To run a Snakemake workflow using your azure identity you need to ensure you are logged in using the [Azure CLI](https://learn.microsoft.com/en-us/cli/azure/):
 
