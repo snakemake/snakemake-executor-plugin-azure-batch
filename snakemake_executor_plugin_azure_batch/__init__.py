@@ -15,7 +15,6 @@ import azure.batch._batch_service_client as bsc
 import azure.batch.models as bm
 from azure.batch import BatchServiceClient
 from azure.core.exceptions import HttpResponseError
-from azure.identity import DefaultAzureCredential
 from azure.mgmt.batch import BatchManagementClient
 from snakemake_interface_common.exceptions import WorkflowError
 from snakemake_interface_executor_plugins.executors.base import SubmittedJobInfo
@@ -30,6 +29,7 @@ from snakemake_executor_plugin_azure_batch import build
 from snakemake_executor_plugin_azure_batch.constant import AZURE_BATCH_RESOURCE_ENDPOINT
 from snakemake_executor_plugin_azure_batch.util import (
     AzureIdentityCredentialAdapter,
+    CustomAzureCredential,
     read_stream_as_string,
     unpack_compute_node_errors,
     unpack_task_failure_information,
@@ -278,8 +278,7 @@ class Executor(RemoteExecutor):
 
     def init_batch_client(self):
         """
-        Initialize the BatchServiceClient and BatchManagementClient using
-        DefaultAzureCredential.
+        Initialize the BatchServiceClient and BatchManagementClient
 
         Sets:
             - self.batch_client
@@ -287,12 +286,9 @@ class Executor(RemoteExecutor):
         """
         try:
 
-            # initialize BatchServiceClient
-            default_credential = DefaultAzureCredential(
-                exclude_managed_identity_credential=True
-            )
             adapted_credential = AzureIdentityCredentialAdapter(
-                credential=default_credential, resource_id=AZURE_BATCH_RESOURCE_ENDPOINT
+                credential=CustomAzureCredential(),
+                resource_id=AZURE_BATCH_RESOURCE_ENDPOINT,
             )
             self.batch_client = BatchServiceClient(
                 adapted_credential, self.settings.account_url
@@ -300,7 +296,7 @@ class Executor(RemoteExecutor):
 
             # initialize BatchManagementClient
             self.batch_mgmt_client = BatchManagementClient(
-                credential=default_credential,
+                credential=CustomAzureCredential(),
                 subscription_id=self.settings.subscription_id,
             )
 

@@ -6,7 +6,21 @@ from azure.batch.models import ComputeNodeError, NameValuePair, TaskFailureInfor
 from azure.core.pipeline import PipelineContext, PipelineRequest
 from azure.core.pipeline.policies import BearerTokenCredentialPolicy
 from azure.core.pipeline.transport import HttpRequest
-from azure.identity import DefaultAzureCredential
+from azure.identity import (
+    AzureCliCredential,
+    ChainedTokenCredential,
+    EnvironmentCredential,
+    ManagedIdentityCredential,
+)
+
+
+def CustomAzureCredential() -> ChainedTokenCredential:
+    credential_chain = (
+        AzureCliCredential(),
+        ManagedIdentityCredential(),
+        EnvironmentCredential(),
+    )
+    return ChainedTokenCredential(*credential_chain)
 
 
 # The usage of this credential helper is required to authenticate batch with managed
@@ -26,13 +40,13 @@ class AzureIdentityCredentialAdapter(msa.BasicTokenAuthentication):
         azure.common.credentials or msrestazure.
 
         Args:
-            credential: Any azure-identity credential (DefaultAzureCredential by
+            credential: Any azure-identity credential (CustomAzureCredential by
                    default)
             resource_id (str): The scope to use to get the token (default ARM)
         """
         super(AzureIdentityCredentialAdapter, self).__init__(None)
         if credential is None:
-            credential = DefaultAzureCredential()
+            credential = CustomAzureCredential()
         self._policy = BearerTokenCredentialPolicy(credential, resource_id, **kwargs)
 
     def _make_request(self):
