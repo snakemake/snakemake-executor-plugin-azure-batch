@@ -28,7 +28,7 @@ flake8 = "^7.1.0"
 coverage = "^7.6.0"
 pytest = "^8.2.2"
 snakemake = {git = "https://github.com/snakemake/snakemake.git"}
-snakemake-storage-plugin-s3 = "0.2.11"
+snakemake-storage-plugin-s3 = "0.2.12"
 
 [tool.coverage.run]
 omit = [".*", "*/site-packages/*", "Snakefile"]
