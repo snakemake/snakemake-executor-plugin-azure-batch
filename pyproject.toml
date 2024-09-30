@@ -18,7 +18,7 @@ snakemake-interface-common = "^1.17.2"
 snakemake-interface-executor-plugins = "^9.2.0"
 azure-storage-blob = "^12.20.0"
 azure-batch = "^14.2.0"
-azure-mgmt-batch = "^17.0.0"
+azure-mgmt-batch = ">=17,<19"
 azure-identity = "^1.17.1"
 msrest = "^0.7.1"
 
