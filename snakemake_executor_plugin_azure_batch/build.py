@@ -95,8 +95,7 @@ def batch_pool_params(pool_id: str, settings, container_image: str) -> Pool:
                 "No container registry authentication scheme set. Please set the "
                 "SNAKEMAKE_AZURE_BATCH_CONTAINER_REGISTRY_USER and "
                 "SNAKEMAKE_AZURE_BATCH_CONTAINER_REGISTRY_PASS "
-                "or set SNAKEMAKE_AZURE_BATCH_MANAGED_IDENTITY_CLIENT_ID and "
-                "SNAKEMAKE_AZURE_BATCH_MANAGED_IDENTITY_RESOURCE_ID "
+                "or set SNAKEMAKE_AZURE_BATCH_MANAGED_IDENTITY_RESOURCE_ID "
                 "and Grant it permissions to the Azure Container Registry."
             )
 

@@ -124,15 +124,6 @@ class ExecutorSettings(ExecutorSettingsBase):
             "env_var": True,
         },
     )
-    managed_identity_client_id: Optional[str] = field(
-        default=None,
-        repr=False,
-        metadata={
-            "help": "Azure Managed Identity client id.",
-            "required": False,
-            "env_var": True,
-        },
-    )
     node_start_task_url: Optional[str] = field(
         default=None,
         metadata={
