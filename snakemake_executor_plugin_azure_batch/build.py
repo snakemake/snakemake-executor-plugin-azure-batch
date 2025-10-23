@@ -1,5 +1,6 @@
 import datetime
 import uuid
+import json
 
 import azure.batch.models as bm
 from azure.mgmt.batch.models import (
@@ -15,6 +16,7 @@ from azure.mgmt.batch.models import (
     ElevationLevel,
     FixedScaleSettings,
     ImageReference,
+    MountConfiguration,
     NetworkConfiguration,
     NodeCommunicationMode,
     Pool,
@@ -52,9 +54,10 @@ def batch_pool_params(pool_id: str, settings, container_image: str) -> Pool:
         version="latest",
     )
 
-    network_config = None
-    if settings.pool_subnet_id is not None:
-        network_config = NetworkConfiguration(subnet_id=settings.pool_subnet_id)
+    network_config = NetworkConfiguration(subnet_id=settings.pool_subnet_id,
+                                          public_address_provisioning_type=settings.public_address_provisioning_type,
+                                          accelerated_networking_enabled=settings.accelerated_networking_enabled
+                                          )
 
     # configure batch pool identity
     batch_pool_identity = None
@@ -164,6 +167,24 @@ def batch_pool_params(pool_id: str, settings, container_image: str) -> Pool:
         fixed_scale=FixedScaleSettings(target_dedicated_nodes=settings.pool_node_count)
     )
 
+    if settings.pool_mount_configuration:
+        mount_configuration = MountConfiguration.deserialize(
+            settings.pool_mount_configuration
+        )
+        try:
+            json.loads(settings.pool_mount_configuration)
+        except Exception as e:
+            raise WorkflowError(
+                f"Invalid mount configuration (invalid JSON): "
+                f"{settings.pool_mount_configuration}"
+            ) from e
+        if mount_configuration is None:  # This tests if it parsed correctly by the SDK
+            raise WorkflowError(
+                f"Invalid mount configuration: {settings.pool_mount_configuration}"
+            )
+    else:
+        mount_configuration = None
+
     return Pool(
         identity=batch_pool_identity,
         display_name=pool_id,
@@ -185,6 +206,7 @@ def batch_pool_params(pool_id: str, settings, container_image: str) -> Pool:
         target_node_communication_mode=NodeCommunicationMode(
             settings.node_communication_mode.title()
             ),
+        mount_configuration=mount_configuration,
     )
 
 

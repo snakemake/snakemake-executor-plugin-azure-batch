@@ -62,6 +62,14 @@ common_settings = CommonSettings(
 # Omit this class if you don't need any.
 @dataclass
 class ExecutorSettings(ExecutorSettingsBase):
+    accelerated_networking_enabled: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable accelerated networking on the batch pool nodes.",
+            "required": False,
+            "env_var": False,
+        },
+    )
     account_url: Optional[str] = field(
         default=None,
         metadata={
@@ -170,6 +178,18 @@ class ExecutorSettings(ExecutorSettingsBase):
             "env_var": False,
         },
     )
+    pool_mount_configuration: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Azure Batch pool mount configuration in JSON format."
+            "Each mount must be an object in the JSON array."
+            "See https://learn.microsoft.com/en-us/azure/batch/batch-mount-azure-storage?tabs=azure-portal#mount-configuration "
+            "for details on the mount configuration format."
+            "Example: [{'azureBlobFileSystemConfiguration': {'accountName': '123', 'containerName': 'ok', 'relativeMountPath': 'data'}}]",
+            "required": False,
+            "env_var": False,
+        },
+    )
     pool_subnet_id: Optional[str] = field(
         default=None,
         metadata={
@@ -222,6 +242,14 @@ class ExecutorSettings(ExecutorSettingsBase):
         default=1,
         metadata={
             "help": "Azure batch pool node count.",
+            "required": False,
+            "env_var": False,
+        },
+    )
+    public_address_provisioning_type: str = field(
+        default="NoPublicIPAddresses",
+        metadata={
+            "help": "Azure Batch public address provisioning type.",
             "required": False,
             "env_var": False,
         },
