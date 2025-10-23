@@ -122,14 +122,14 @@ def batch_pool_params(pool_id: str, settings, container_image: str) -> Pool:
 
     # if configured use start task bash script from url
     # can be SAS url or other accessible url hosting bash script
-    if settings.node_start_task_url is not None:
-        _SIMPLE_TASK_NAME = "start_task.sh"
-        start_task_admin = UserIdentity(
-            auto_user=AutoUserSpecification(
-                elevation_level=ElevationLevel.ADMIN,
-                scope=AutoUserScope.POOL,
-            )
+    start_task_admin = UserIdentity(
+        auto_user=AutoUserSpecification(
+            elevation_level=ElevationLevel.ADMIN,
+            scope=AutoUserScope.POOL,
         )
+    )
+    if settings.node_start_task_url:
+        _SIMPLE_TASK_NAME = "start_task.sh"
         start_task_conf = StartTask(
             command_line=f"bash {_SIMPLE_TASK_NAME}",
             resource_files=[
@@ -140,7 +140,15 @@ def batch_pool_params(pool_id: str, settings, container_image: str) -> Pool:
             ],
             user_identity=start_task_admin,
         )
-
+    if settings.node_start_task:
+        start_task_conf = StartTask(
+            command_line=settings.node_start_task,
+            user_identity=start_task_admin,
+        )
+    if settings.node_start_task and settings.node_start_task_url:
+        raise WorkflowError(
+            "You cannot set both node_start_task and node_start_task_url."
+        )
     # auto scale requires the initial dedicated node count to be zero
     # min allowed interval of five minutes
     if settings.autoscale:

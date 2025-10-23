@@ -138,7 +138,18 @@ class ExecutorSettings(ExecutorSettingsBase):
         metadata={
             "help": "Azure Batch node start task bash script url."
             "This can be any url that hosts your start task bash script. Azure blob SAS"
-            "urls work nicely here",
+            "urls work nicely here."
+            "Cannot be used along with node_start_task.",
+            "required": False,
+            "env_var": False,
+        },
+    )
+    node_start_task: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Azure Batch node start task bash script."
+            "Example: echo Hello World > /mnt/batch/tasks/startup/welcome.txt"
+            "Cannot be used along with node_start_task_url.",
             "required": False,
             "env_var": False,
         },
