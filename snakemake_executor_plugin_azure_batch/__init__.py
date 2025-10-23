@@ -195,7 +195,7 @@ class ExecutorSettings(ExecutorSettingsBase):
         },
     )
     pool_image_sku: str = field(
-        default="20-04-lts",
+        default="22-04-lts",
         metadata={
             "help": "Batch pool image sku.",
             "required": False,
