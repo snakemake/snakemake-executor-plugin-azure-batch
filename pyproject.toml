@@ -18,8 +18,8 @@ snakemake-interface-common = "^1.17.2"
 snakemake-interface-executor-plugins = "^9.2.0"
 azure-storage-blob = "^12.20.0"
 azure-batch = "^14.2.0"
-azure-mgmt-batch = "^17.0.0"
-azure-identity = "^1.17.1"
+azure-mgmt-batch = "^18.0.0"
+azure-identity = "^1.25.0"
 msrest = "^0.7.1"
 
 [tool.poetry.group.dev.dependencies]
