@@ -1,6 +1,6 @@
-__author__ = "Jake VanCampen, Johannes Köster, Andreas Wilm"
-__copyright__ = "Copyright 2023, Snakemake community"
-__email__ = "jake.vancampen7@gmail.com"
+__author__ = "Simon Ungar Felding, Jake VanCampen, Johannes Köster, Andreas Wilm"
+__copyright__ = "Copyright 2025, Snakemake community"
+__email__ = "sife@adm.ku.dk"
 __license__ = "MIT"
 
 

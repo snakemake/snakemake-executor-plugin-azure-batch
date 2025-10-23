@@ -3,6 +3,7 @@ name = "snakemake-executor-plugin-azure-batch"
 version = "0.3.0"
 description = "A Snakemake executor plugin for submitting jobs to Microsoft Azure Batch."
 authors = [
+  "Simon Ungar Felding <sife@adm.ku.dk>",
   "Jake VanCampen <jake.vancampen7@gmail.com>",
   "Johannes Koester <johannes.koester@uni-due.de>"
 ]
