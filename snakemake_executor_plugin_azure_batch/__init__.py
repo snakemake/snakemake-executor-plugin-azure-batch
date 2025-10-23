@@ -152,7 +152,7 @@ class ExecutorSettings(ExecutorSettingsBase):
         },
     )
     node_communication_mode: Optional[str] = field(
-        default=None,
+        default="default",
         metadata={
             "help": "Azure Batch node communication mode.",
             "required": False,

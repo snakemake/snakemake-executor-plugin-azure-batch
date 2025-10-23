@@ -174,7 +174,9 @@ def batch_pool_params(pool_id: str, settings, container_image: str) -> Pool:
         task_scheduling_policy=TaskSchedulingPolicy(
             node_fill_type=settings.node_fill_type
         ),
-        target_node_communication_mode=NodeCommunicationMode.CLASSIC,
+        target_node_communication_mode=NodeCommunicationMode(
+            settings.node_communication_mode.title()
+            ),
     )
 
 
