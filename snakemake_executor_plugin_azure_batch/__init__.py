@@ -203,7 +203,7 @@ class ExecutorSettings(ExecutorSettingsBase):
         },
     )
     pool_vm_node_agent_sku_id: str = field(
-        default="batch.node.ubuntu 20.04",
+        default="batch.node.ubuntu 22.04",
         metadata={
             "help": "Azure batch pool vm node agent sku id.",
             "required": False,
