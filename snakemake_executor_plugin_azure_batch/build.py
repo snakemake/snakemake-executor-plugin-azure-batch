@@ -1,5 +1,6 @@
 import datetime
 import uuid
+import json
 
 import azure.batch.models as bm
 from azure.mgmt.batch.models import (
@@ -15,6 +16,7 @@ from azure.mgmt.batch.models import (
     ElevationLevel,
     FixedScaleSettings,
     ImageReference,
+    MountConfiguration,
     NetworkConfiguration,
     NodeCommunicationMode,
     Pool,
@@ -52,9 +54,10 @@ def batch_pool_params(pool_id: str, settings, container_image: str) -> Pool:
         version="latest",
     )
 
-    network_config = None
-    if settings.pool_subnet_id is not None:
-        network_config = NetworkConfiguration(subnet_id=settings.pool_subnet_id)
+    network_config = NetworkConfiguration(subnet_id=settings.pool_subnet_id,
+                                          public_address_provisioning_type=settings.public_address_provisioning_type,
+                                          accelerated_networking_enabled=settings.accelerated_networking_enabled
+                                          )
 
     # configure batch pool identity
     batch_pool_identity = None
@@ -122,14 +125,14 @@ def batch_pool_params(pool_id: str, settings, container_image: str) -> Pool:
 
     # if configured use start task bash script from url
     # can be SAS url or other accessible url hosting bash script
-    if settings.node_start_task_url is not None:
-        _SIMPLE_TASK_NAME = "start_task.sh"
-        start_task_admin = UserIdentity(
-            auto_user=AutoUserSpecification(
-                elevation_level=ElevationLevel.ADMIN,
-                scope=AutoUserScope.POOL,
-            )
+    start_task_admin = UserIdentity(
+        auto_user=AutoUserSpecification(
+            elevation_level=ElevationLevel.ADMIN,
+            scope=AutoUserScope.POOL,
         )
+    )
+    if settings.node_start_task_url:
+        _SIMPLE_TASK_NAME = "start_task.sh"
         start_task_conf = StartTask(
             command_line=f"bash {_SIMPLE_TASK_NAME}",
             resource_files=[
@@ -140,7 +143,15 @@ def batch_pool_params(pool_id: str, settings, container_image: str) -> Pool:
             ],
             user_identity=start_task_admin,
         )
-
+    if settings.node_start_task:
+        start_task_conf = StartTask(
+            command_line=settings.node_start_task,
+            user_identity=start_task_admin,
+        )
+    if settings.node_start_task and settings.node_start_task_url:
+        raise WorkflowError(
+            "You cannot set both node_start_task and node_start_task_url."
+        )
     # auto scale requires the initial dedicated node count to be zero
     # min allowed interval of five minutes
     if settings.autoscale:
@@ -155,6 +166,24 @@ def batch_pool_params(pool_id: str, settings, container_image: str) -> Pool:
     scale_settings = ScaleSettings(
         fixed_scale=FixedScaleSettings(target_dedicated_nodes=settings.pool_node_count)
     )
+
+    if settings.pool_mount_configuration:
+        mount_configuration = MountConfiguration.deserialize(
+            settings.pool_mount_configuration
+        )
+        try:
+            json.loads(settings.pool_mount_configuration)
+        except Exception as e:
+            raise WorkflowError(
+                f"Invalid mount configuration (invalid JSON): "
+                f"{settings.pool_mount_configuration}"
+            ) from e
+        if mount_configuration is None:  # This tests if it parsed correctly by the SDK
+            raise WorkflowError(
+                f"Invalid mount configuration: {settings.pool_mount_configuration}"
+            )
+    else:
+        mount_configuration = None
 
     return Pool(
         identity=batch_pool_identity,
@@ -174,7 +203,10 @@ def batch_pool_params(pool_id: str, settings, container_image: str) -> Pool:
         task_scheduling_policy=TaskSchedulingPolicy(
             node_fill_type=settings.node_fill_type
         ),
-        target_node_communication_mode=NodeCommunicationMode.CLASSIC,
+        target_node_communication_mode=NodeCommunicationMode(
+            settings.node_communication_mode.title()
+            ),
+        mount_configuration=mount_configuration,
     )
 
 
@@ -183,6 +215,7 @@ def batch_task(
     container_image: str,
     envvars: dict,
     remote_task_command: str,
+    settings,
 ) -> bm.TaskAddParameter:
     """
     Creates a batch task for executing a remote task in Azure Batch.
@@ -216,7 +249,7 @@ def batch_task(
         ),
         container_settings=bm.TaskContainerSettings(
             image_name=container_image,
-            container_run_options="--rm",
+            container_run_options=settings.container_run_options,
         ),
         environment_settings=env_settings,
     )

@@ -1,6 +1,6 @@
-__author__ = "Jake VanCampen, Johannes Köster, Andreas Wilm"
-__copyright__ = "Copyright 2023, Snakemake community"
-__email__ = "jake.vancampen7@gmail.com"
+__author__ = "Simon Ungar Felding, Jake VanCampen, Johannes Köster, Andreas Wilm"
+__copyright__ = "Copyright 2025, Snakemake community"
+__email__ = "sife@adm.ku.dk"
 __license__ = "MIT"
 
 
@@ -62,6 +62,14 @@ common_settings = CommonSettings(
 # Omit this class if you don't need any.
 @dataclass
 class ExecutorSettings(ExecutorSettingsBase):
+    accelerated_networking_enabled: bool = field(
+        default=False,
+        metadata={
+            "help": "Enable accelerated networking on the batch pool nodes.",
+            "required": False,
+            "env_var": False,
+        },
+    )
     account_url: Optional[str] = field(
         default=None,
         metadata={
@@ -105,6 +113,14 @@ class ExecutorSettings(ExecutorSettingsBase):
             "env_var": True,
         },
     )
+    container_run_options: Optional[str] = field(
+        default="--rm",
+        metadata={
+            "help": "Additional docker run options for the container execution.",
+            "required": False,
+            "env_var": False,
+        },
+    )
     keep_pool: bool = field(
         default=False,
         metadata={
@@ -138,7 +154,18 @@ class ExecutorSettings(ExecutorSettingsBase):
         metadata={
             "help": "Azure Batch node start task bash script url."
             "This can be any url that hosts your start task bash script. Azure blob SAS"
-            "urls work nicely here",
+            "urls work nicely here."
+            "Cannot be used along with node_start_task.",
+            "required": False,
+            "env_var": False,
+        },
+    )
+    node_start_task: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Azure Batch node start task bash script."
+            "Example: echo Hello World > /mnt/batch/tasks/startup/welcome.txt"
+            "Cannot be used along with node_start_task_url.",
             "required": False,
             "env_var": False,
         },
@@ -152,9 +179,21 @@ class ExecutorSettings(ExecutorSettingsBase):
         },
     )
     node_communication_mode: Optional[str] = field(
-        default=None,
+        default="default",
         metadata={
             "help": "Azure Batch node communication mode.",
+            "required": False,
+            "env_var": False,
+        },
+    )
+    pool_mount_configuration: Optional[str] = field(
+        default=None,
+        metadata={
+            "help": "Azure Batch pool mount configuration in JSON format."
+            "Each mount must be an object in the JSON array."
+            "See https://learn.microsoft.com/en-us/azure/batch/batch-mount-azure-storage?tabs=azure-portal#mount-configuration "
+            "for details on the mount configuration format."
+            "Example: [{'azureBlobFileSystemConfiguration': {'accountName': '123', 'containerName': 'ok', 'relativeMountPath': 'data'}}]",
             "required": False,
             "env_var": False,
         },
@@ -184,7 +223,7 @@ class ExecutorSettings(ExecutorSettingsBase):
         },
     )
     pool_image_sku: str = field(
-        default="20-04-lts",
+        default="22-04-lts",
         metadata={
             "help": "Batch pool image sku.",
             "required": False,
@@ -192,7 +231,7 @@ class ExecutorSettings(ExecutorSettingsBase):
         },
     )
     pool_vm_node_agent_sku_id: str = field(
-        default="batch.node.ubuntu 20.04",
+        default="batch.node.ubuntu 22.04",
         metadata={
             "help": "Azure batch pool vm node agent sku id.",
             "required": False,
@@ -211,6 +250,14 @@ class ExecutorSettings(ExecutorSettingsBase):
         default=1,
         metadata={
             "help": "Azure batch pool node count.",
+            "required": False,
+            "env_var": False,
+        },
+    )
+    public_address_provisioning_type: str = field(
+        default="NoPublicIPAddresses",
+        metadata={
+            "help": "Azure Batch public address provisioning type.",
             "required": False,
             "env_var": False,
         },
@@ -351,7 +398,7 @@ class Executor(RemoteExecutor):
         self.logger.debug(f"Remote command: {remote_command}")
 
         task: bm.TaskAddParameter = build.batch_task(
-            job, self.container_image, self.envvars(), remote_command
+            job, self.container_image, self.envvars(), remote_command,  self.settings
         )
 
         job_info = SubmittedJobInfo(job, external_jobid=task.id)

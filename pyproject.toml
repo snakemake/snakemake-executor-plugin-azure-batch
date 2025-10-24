@@ -3,6 +3,7 @@ name = "snakemake-executor-plugin-azure-batch"
 version = "0.3.0"
 description = "A Snakemake executor plugin for submitting jobs to Microsoft Azure Batch."
 authors = [
+  "Simon Ungar Felding <sife@adm.ku.dk>",
   "Jake VanCampen <jake.vancampen7@gmail.com>",
   "Johannes Koester <johannes.koester@uni-due.de>"
 ]
@@ -18,8 +19,8 @@ snakemake-interface-common = "^1.17.2"
 snakemake-interface-executor-plugins = "^9.2.0"
 azure-storage-blob = "^12.20.0"
 azure-batch = "^14.2.0"
-azure-mgmt-batch = "^17.0.0"
-azure-identity = "^1.17.1"
+azure-mgmt-batch = "^18.0.0"
+azure-identity = "^1.25.0"
 msrest = "^0.7.1"
 
 [tool.poetry.group.dev.dependencies]
