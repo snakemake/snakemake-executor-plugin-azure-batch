@@ -215,6 +215,7 @@ def batch_task(
     container_image: str,
     envvars: dict,
     remote_task_command: str,
+    settings,
 ) -> bm.TaskAddParameter:
     """
     Creates a batch task for executing a remote task in Azure Batch.
@@ -248,7 +249,7 @@ def batch_task(
         ),
         container_settings=bm.TaskContainerSettings(
             image_name=container_image,
-            container_run_options="--rm",
+            container_run_options=settings.container_run_options,
         ),
         environment_settings=env_settings,
     )

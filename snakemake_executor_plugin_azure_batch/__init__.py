@@ -113,6 +113,14 @@ class ExecutorSettings(ExecutorSettingsBase):
             "env_var": True,
         },
     )
+    container_run_options: Optional[str] = field(
+        default="--rm",
+        metadata={
+            "help": "Additional docker run options for the container execution.",
+            "required": False,
+            "env_var": False,
+        },
+    )
     keep_pool: bool = field(
         default=False,
         metadata={
@@ -390,7 +398,7 @@ class Executor(RemoteExecutor):
         self.logger.debug(f"Remote command: {remote_command}")
 
         task: bm.TaskAddParameter = build.batch_task(
-            job, self.container_image, self.envvars(), remote_command
+            job, self.container_image, self.envvars(), remote_command,  self.settings
         )
 
         job_info = SubmittedJobInfo(job, external_jobid=task.id)
